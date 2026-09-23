@@ -27,13 +27,20 @@ const FLAG_RU = {
   layering: 'цепочка наслоения',
   split_in: 'дробление переводов',
 };
+const TERM_RU = {
+  money: 'деньги курьеров',
+  turnover: 'оборот',
+  betweenness: 'посредничество',
+  role: 'роль',
+  reach: 'охват seed',
+};
 const QUEUE_SIZE = 30;
 const EDGE_COLOR = '#8a8f98';
 const EDGE_OPACITY = 0.45;
 const FADED = 0.12;
 
 const state = {
-  graph: null, byId: new Map(), ranked: [], selected: null,
+  graph: null, byId: new Map(), ranked: [], rank: new Map(), inc: new Map(), out: new Map(), selected: null,
   network: null, nodesDS: null, edgesDS: null,
 };
 
@@ -56,6 +63,7 @@ function el(tag, attrs = {}, ...children) {
 const fmtInt = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
 const fmtKzt = (x) => fmtInt.format(x) + ' ₸';
 const fmtP = (x) => Number(x).toFixed(3);
+const fmtPct = new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 2 }).format;
 
 function roleBadge(role) {
   return el('span', { class: `badge ${role}` }, ROLE_RU[role] || role);
@@ -174,6 +182,8 @@ function highlight(gid) {
     id: i,
     color: { color: EDGE_COLOR, opacity: e.source === gid || e.target === gid ? 0.95 : 0.04 },
   })));
+  net.setSize('100%', '100%');
+  net.redraw();
   net.selectNodes([gid]);
   net.focus(gid, { scale: 1.2, animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
 }
@@ -211,6 +221,126 @@ function setupSearch() {
   });
 }
 
+// ---------------------------------------------------------------- экран 3: карточка узла
+function block(title, ...children) {
+  return el('section', { class: 'cb' }, el('h3', {}, title), ...children);
+}
+function kv(label, value) {
+  return el('div', { class: 'kv' }, el('span', { class: 'k' }, label), el('span', { class: 'v' }, value));
+}
+
+function cardHead(n) {
+  return el('section', { class: 'cb' },
+    el('div', { class: 'card-top' },
+      el('span', { class: 'gid big' }, n.id),
+      el('button', { type: 'button', class: 'close', title: 'Закрыть', 'data-action': 'close' }, '×')),
+    el('div', {}, roleBadge(n.role),
+      n.seed ? el('span', { class: 'tag seed' }, 'seed') : null,
+      n.truncated ? el('span', { class: 'tag truncated' }, 'край выборки') : null),
+    el('div', { class: 'kvs' },
+      kv('правило', n.rule_id),
+      kv('сила признаков', String(n.role_score)),
+      kv('кластер', n.cluster === 0 ? '0 — без связей' : String(n.cluster)),
+      kv('колено', String(n.depth)),
+      kv('место в очереди', `${state.rank.get(n.id)} из ${fmtInt.format(state.ranked.length)}`)),
+    el('div', { class: 'facts' },
+      `получено ${fmtKzt(n.in_kzt)} · плательщиков: ${n.in_deg} · отправлено ${fmtKzt(n.out_kzt)} · получателей: ${n.out_deg}`),
+    n.seed_money > 0
+      ? el('div', { class: 'facts' },
+        `след денег курьеров: ${fmtKzt(n.seed_money)} (${fmtPct(n.seed_money_share)} от всех) · путь есть у ${n.seed_reach} seed`)
+      : null,
+  );
+}
+
+function cardPriority(n) {
+  const t = n.priority_terms || {};
+  const keys = Object.keys(TERM_RU);
+  const top = Math.max(...keys.map((k) => t[k] || 0));
+  const rows = keys.map((k) => {
+    const v = t[k] || 0;
+    const w = top > 0 ? (100 * v) / top : 0;
+    return el('div', { class: 'bar-row' },
+      el('span', {}, `${TERM_RU[k]} `, el('span', { class: 'muted' }, k)),
+      el('span', { class: 'bar-bg' }, el('span', { class: 'bar', style: `width:${w}%` })),
+      el('span', { class: 'num' }, fmtP(v)));
+  });
+  const mult = t.multiplier !== undefined && t.multiplier !== 1
+    ? el('div', { class: 'facts' }, `множитель: ×${t.multiplier}`)
+    : null;
+  return block('Приоритет проверки', el('div', { class: 'prio' }, fmtP(n.priority)), rows, mult);
+}
+
+function cardFlags(n) {
+  const levels = (n.levels || []).map((l) => el('li', {}, `уровень ${l.level} — ${l.list}`));
+  return block('Метки и уровни',
+    n.flags && n.flags.length ? el('div', {}, flagChips(n.flags)) : el('div', { class: 'muted' }, 'меток нет'),
+    n.flags_evidence ? el('div', { class: 'facts' }, n.flags_evidence) : null,
+    levels.length ? el('ul', { class: 'limits' }, levels) : null,
+    n.plan_step ? el('div', { class: 'facts' }, `шаг ${n.plan_step} из ${state.graph.plan.length} в плане охвата`) : null,
+  );
+}
+
+function edgeList(edges, otherEnd) {
+  if (!edges.length) return el('div', { class: 'muted' }, 'нет');
+  const rows = [...edges].sort((a, b) => b.sum_kzt - a.sum_kzt).map((e) => {
+    const c = state.byId.get(e[otherEnd]);
+    return el('li', { dataset: { gid: c.id }, title: 'Перейти к узлу' },
+      el('span', { class: 'gid' }, c.id), roleBadge(c.role),
+      el('span', { class: 'num' }, fmtKzt(e.sum_kzt)),
+      el('span', { class: 'muted' }, `${e.n_tx} пер.`));
+  });
+  return el('ul', { class: 'edges' }, rows);
+}
+
+function cardEdges(n) {
+  const inc = state.inc.get(n.id) || [];
+  const out = state.out.get(n.id) || [];
+  return block('Переводы узла',
+    el('div', { class: 'sub' }, `← входящие: ${inc.length}`), edgeList(inc, 'source'),
+    el('div', { class: 'sub' }, `→ исходящие: ${out.length}`), edgeList(out, 'target'));
+}
+
+function cardLimits(n) {
+  const items = [];
+  if (n.out_deg === 0) items.push('исходящие от 5 000 ₸ внутри банка не наблюдаются в выборке');
+  if (n.truncated) items.push('край выборки: исходящие не выгружены');
+  if (n.seed) items.push('входящие извне выборки не видны');
+  return block('Ограничения данных',
+    items.length ? el('ul', { class: 'limits' }, items.map((t) => el('li', {}, t))) : el('div', { class: 'muted' }, '—'));
+}
+
+function renderCard(gid) {
+  const n = state.byId.get(gid);
+  const card = $('#card');
+  card.replaceChildren(
+    cardHead(n),
+    block('Почему в очереди', el('div', { class: 'evidence' }, n.evidence)),
+    cardPriority(n),
+    cardFlags(n),
+    cardEdges(n),
+    cardLimits(n),
+  );
+  card.hidden = false;
+  card.scrollTop = 0;
+  $('.layout').classList.add('with-card');
+}
+
+function closeCard() {
+  $('#card').hidden = true;
+  $('.layout').classList.remove('with-card');
+  state.selected = null;
+  for (const tr of document.querySelectorAll('#queue tbody tr.selected')) tr.classList.remove('selected');
+  clearHighlight();
+}
+
+function setupCard() {
+  $('#card').addEventListener('click', (e) => {
+    if (e.target.closest('[data-action="close"]')) return closeCard();
+    const li = e.target.closest('li[data-gid]');
+    if (li) select(li.dataset.gid);
+  });
+}
+
 // ---------------------------------------------------------------- выбор узла
 function select(gid) {
   if (!state.byId.has(gid)) return false;
@@ -218,7 +348,8 @@ function select(gid) {
   for (const tr of document.querySelectorAll('#queue tbody tr')) {
     tr.classList.toggle('selected', tr.dataset.gid === gid);
   }
-  highlight(gid);
+  renderCard(gid);
+  highlight(gid); // setSize() внутри читает новую ширину контейнера после открытия карточки
   return true;
 }
 
@@ -229,10 +360,18 @@ async function load() {
   const g = await res.json();
   state.graph = g;
   for (const n of g.nodes) state.byId.set(n.id, n);
+  for (const e of g.edges) {
+    if (!state.out.has(e.source)) state.out.set(e.source, []);
+    if (!state.inc.has(e.target)) state.inc.set(e.target, []);
+    state.out.get(e.source).push(e);
+    state.inc.get(e.target).push(e);
+  }
   state.ranked = [...g.nodes].sort((a, b) => b.priority - a.priority);
+  state.ranked.forEach((n, i) => state.rank.set(n.id, i + 1));
   $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)}`;
   renderQueue();
   setupSearch();
+  setupCard();
   buildMap();
 }
 

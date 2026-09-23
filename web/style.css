@@ -50,3 +50,33 @@ body { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-
 #map { flex: 1 1 auto; min-height: 300px; }
 .map-status { position: absolute; top: 56px; left: 12px; padding: 4px 8px; background: rgba(255, 255, 255, .9); border-radius: 4px; font-size: 12px; color: #555; pointer-events: none; }
 .map-status:empty { display: none; }
+
+/* ---- экран 3: карточка узла */
+.layout.with-card .left { flex-basis: 30%; }
+.card { flex: 0 0 420px; overflow: auto; border-left: 1px solid #ddd; background: #fff; }
+.card[hidden] { display: none; }
+.cb { padding: 10px 14px; border-bottom: 1px solid #eee; }
+.cb h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #888; font-weight: 600; }
+.card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.gid.big { font: 600 15px ui-monospace, Consolas, monospace; }
+.close { border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: #666; padding: 0 4px; }
+.tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 4px; font-size: 12px; border: 1px solid #333; }
+.tag.seed { border: 2px solid #000; font-weight: 600; }
+.tag.truncated { border: 1px dashed #333; }
+.kvs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; margin: 8px 0 4px; font-size: 13px; }
+.kv .k { color: #888; margin-right: 6px; }
+.facts { font-size: 13px; color: #333; margin-top: 4px; }
+.evidence { font-size: 17px; line-height: 1.45; font-weight: 500; }
+.prio { font-size: 22px; font-weight: 600; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.bar-row { display: grid; grid-template-columns: 130px 1fr 52px; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; }
+.bar-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.bar-bg { height: 8px; background: #eef0f3; border-radius: 3px; overflow: hidden; }
+.bar { display: block; height: 100%; background: #4c6ef5; }
+.sub { margin: 8px 0 2px; font-size: 12px; font-weight: 600; color: #555; }
+.edges { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; }
+.edges li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 2px; border-bottom: 1px solid #f2f2f2; font-size: 12px; cursor: pointer; }
+.edges li:hover { background: #f3f6ff; }
+.edges .gid { font-family: ui-monospace, Consolas, monospace; }
+.edges .num { margin-left: auto; font-variant-numeric: tabular-nums; }
+.limits { margin: 0; padding-left: 18px; font-size: 13px; }
+.limits li { margin: 2px 0; }
