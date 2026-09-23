@@ -22,7 +22,8 @@
 Журнал: каждый вызов дописывается в out/agent_runs.jsonl; при DATABASE_URL (PostgreSQL из compose.yaml) — ещё и в таблицу agent_runs,
 подтверждённые запросы — в approvals. Ключи в код и в Git не попадают: только переменные окружения (.env, см. .env.example).
 """
-import argparse, json, os, sys, time, urllib.request
+import argparse, hashlib, json, os, sys, time, urllib.request
+from threading import Lock
 from pathlib import Path
 
 OUT = Path(os.environ.get("GRAPH_OUT", "out")); FIX = Path("fixtures/replay.json")
@@ -35,7 +36,10 @@ WEIGHTS = {"money": 0.35}
 SYSTEM = ("Ты — ассистент AML-аналитика банка. Тебе дают рассчитанные кодом факты по узлам транзакционного графа: роль по явному правилу, "
           "цифры, метки, след денег известных курьеров, приоритет. Ты не считаешь ничего сам и не выдумываешь данных. "
           "Объясняй факты простым языком, формулируй гипотезы осторожно («признаки», «возможно»), называй альтернативные объяснения, "
-          "указывай, каких данных не хватает, и предлагай следующий шаг. Никаких утверждений о виновности. Отвечай по-русски, кратко.")
+          "указывай, каких данных не хватает, и предлагай следующий шаг. Никаких утверждений о виновности. "
+          "seed_reach — число других seed, из которых существует направленный путь seed → … → выбранный клиент. "
+          "Это НЕ число seed, которым выбранный клиент отправляет деньги. top_in — плательщики, top_out — получатели. "
+          "Достижимость не доказывает происхождение конкретных денег; seed_money — оценка модели смешивания. Отвечай по-русски, кратко.")
 
 
 def kzt(x):
@@ -76,6 +80,8 @@ class Graph:
             "rank": self.rank(n["id"]), "cluster": n["cluster"], "depth": n["depth"], "seed": n["seed"], "truncated": n["truncated"],
             "in_deg": n["in_deg"], "out_deg": n["out_deg"], "in_kzt": n["in_kzt"], "out_kzt": n["out_kzt"],
             "seed_money_kzt": round(n["seed_money"]), "seed_money_share": n.get("seed_money_share", 0), "seed_reach": n["seed_reach"],
+            "seed_reach_direction": "seed → … → выбранный клиент",
+            "seed_reach_definition": "Число других seed с направленным путём к этому клиенту; без ограничения длины пути. Обратное направление не измеряется.",
             "flags": [FLAG_RU.get(f, f) for f in n.get("flags", [])], "flags_evidence": n.get("flags_evidence", ""),
             "levels": n.get("levels", []), "plan_step": n.get("plan_step"),
             "top_in": [{"from": e["source"], "role": self.nodes[e["source"]]["role"], "sum_kzt": e["sum_kzt"], "n_tx": e["n_tx"]} for e in inc[:5]],
@@ -201,7 +207,7 @@ class Model:
         try:
             c = self._client()
             if self.mode == "live":
-                r = c.responses.create(model=self.model, input=msg, reasoning={"effort": "none"},
+                r = c.responses.create(model=self.model, input=msg, reasoning={"effort": "none"}, store=False,
                                        text={"format": {"type": "json_schema", "name": "answer", "schema": schema, "strict": True}})
                 ans = json.loads(r.output_text)
             else:
@@ -241,56 +247,67 @@ def template_answer(task, payload, schema):
 
 
 # ------------------------------------------------------------------ журнал
+class DatabaseError(RuntimeError):
+    pass
+
+
+class ApprovalConflict(ValueError):
+    pass
+
+
 def _db():
     url = os.environ.get("DATABASE_URL")
     if not url: return None
     try:
         import psycopg2; return psycopg2.connect(url, connect_timeout=3)
-    except Exception:
-        return None  # база необязательна: локальный журнал уже записан
+    except Exception as ex:
+        raise DatabaseError("PostgreSQL недоступна; операция не подтверждена") from ex
+
+
+def current_run_id():
+    path = OUT / "nodes_roles.csv"
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16] if path.exists() else None
+
+
+def _insert_run(cur, kind, payload, answer):
+    src = str(answer.get("_source", "replay"))
+    mode = "replay" if src.startswith(("replay", "template")) else "live"
+    cur.execute("insert into agent_runs (run_id, kind, mode, model, facts, output) values (%s,%s,%s,%s,%s,%s) returning id",
+                (current_run_id(), kind, mode, src.split(":", 1)[1] if mode == "live" and ":" in src else None,
+                 json.dumps(payload, ensure_ascii=False), json.dumps(answer, ensure_ascii=False)))
+    return cur.fetchone()[0]
 
 
 def log_run(kind, payload, answer):
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, "input": payload, "answer": answer}
-    OUT.mkdir(exist_ok=True)
-    with open(OUT / "agent_runs.jsonl", "a", encoding="utf-8") as fh: fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     con = _db()
-    if con:
-        try:
-            src = str(answer.get("_source", "replay")) if isinstance(answer, dict) else "replay"
-            mode = "replay" if src.startswith(("replay", "template")) else "live"
-            with con, con.cursor() as cur:
-                cur.execute("insert into agent_runs (kind, mode, model, facts, output) values (%s, %s, %s, %s, %s)",
-                            (kind, mode, src.split(":", 1)[1] if ":" in src else None, json.dumps(payload, ensure_ascii=False), json.dumps(answer, ensure_ascii=False)))
-        except Exception:
-            pass
-        finally:
-            con.close()
-
-
-def log_approval(gid, action, reviewer):
-    con = _db()
+    log_id = None
     if con:
         try:
             with con, con.cursor() as cur:
-                cur.execute("insert into approvals (gid, action, approved, reviewer) values (%s, %s, true, %s)", (gid, action, reviewer))
-        except Exception:
-            pass
+                log_id = _insert_run(cur, kind, payload, answer)
+        except Exception as ex:
+            raise DatabaseError("Не удалось записать прогон в PostgreSQL") from ex
         finally:
             con.close()
+    # В Compose PostgreSQL — источник журнала; локальный JSONL нужен автономному CLI.
+    if not con:
+        OUT.mkdir(exist_ok=True)
+        with open(OUT / "agent_runs.jsonl", "a", encoding="utf-8") as fh: fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return log_id
 
 
 # ------------------------------------------------------------------ сцены
 def scene_explain(G, M, gid):
     f = G.facts(gid); ans = M.ask(f"explain:{gid}", "Объясни аналитику этот узел и предложи следующий шаг.", f, SCHEMA)
-    log_run("explain", {"gid": gid}, ans); return {"facts": f, "answer": ans}
+    log_id = log_run("explain", f, ans); return {"facts": f, "answer": ans, "agent_run_id": log_id}
 
 
 def scene_decide(G, M, k=3):
     cands = [G.facts(n["id"]) for n in G.top(k)]
     ans = M.ask(f"decide:{k}", f"Из {k} узлов с наибольшим приоритетом выбери, кого проверять первым, и объясни. Учитывай след денег, роль, метки и пробелы в данных.",
                 {"candidates": cands}, DECIDE_SCHEMA)
-    log_run("decide", {"k": k}, ans); return {"candidates": [{"gid": c["gid"], "role": c["role"], "priority": c["priority"], "seed_money_kzt": c["seed_money_kzt"]} for c in cands], "answer": ans}
+    log_run("decide", {"candidates": cands}, ans); return {"candidates": [{"gid": c["gid"], "role": c["role"], "priority": c["priority"], "seed_money_kzt": c["seed_money_kzt"]} for c in cands], "answer": ans}
 
 
 def scene_whatif(G, M, exclude=None, add_seed=None):
@@ -304,15 +321,59 @@ def scene_whatif(G, M, exclude=None, add_seed=None):
     log_run("whatif", res["change"], ans); return res | {"answer": ans}
 
 
-def scene_request(G, M, gid, confirm=False):
+_approval_lock = Lock()
+
+
+def scene_request(G, M, gid, confirm=False, decision=None, action_id=None, reviewer="analyst"):
     draft = G.draft_request(gid)
-    if not confirm:
-        return {"status": "awaiting_human_approval", "draft": draft, "note": "Действие «сформировать запрос» выполняется только после подтверждения человеком: повторите с --confirm"}
-    OUT.joinpath("requests").mkdir(parents=True, exist_ok=True)
-    path = OUT / "requests" / f"request_{gid}.md"; path.write_text(draft, encoding="utf-8")
-    reviewer = os.environ.get("USER") or os.environ.get("USERNAME") or "analyst"
-    log_run("request_approved", {"gid": gid, "approved_by": reviewer}, {"path": str(path)}); log_approval(gid, "request_info", reviewer)
-    return {"status": "saved", "path": str(path), "draft": draft}
+    aid = hashlib.sha256(f"{current_run_id()}:{gid}:{draft}".encode()).hexdigest()
+    if action_id is not None and action_id != aid:
+        raise ApprovalConflict("Черновик изменился: запросите его заново")
+    if decision is None and not confirm:
+        return {"status": "awaiting_human_approval", "action_id": aid, "draft": draft,
+                "note": "Запрос сохраняется локально только после подтверждения человеком; внешней отправки нет."}
+    approved = bool(confirm) if decision is None else decision
+    if not isinstance(approved, bool): raise ValueError("approved должен быть boolean")
+    path = OUT / "requests" / f"request_{gid}.md"
+    result = {"status": "saved" if approved else "rejected", "action_id": aid, "draft": draft, "approved": approved}
+    if approved: result["path"] = str(path)
+    with _approval_lock:
+        con = _db()
+        try:
+            if con:
+                with con, con.cursor() as cur:
+                    # Одна транзакция и блокировка на действие защищают также параллельные запросы.
+                    cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (aid,))
+                    cur.execute("select id, approved from approvals where run_id=%s and action=%s order by id limit 1", (current_run_id(), aid))
+                    existing = cur.fetchone()
+                    if existing:
+                        if existing[1] != approved: raise ApprovalConflict("Решение по этому действию уже принято")
+                        return result | {"approval_id": existing[0], "duplicate": True}
+                    cur.execute("insert into approvals (run_id,gid,action,approved,reviewer) values (%s,%s,%s,%s,%s) returning id",
+                                (current_run_id(), gid, aid, approved, reviewer))
+                    approval_id = cur.fetchone()[0]
+                    log_id = _insert_run(cur, "request_approved" if approved else "request_rejected",
+                                         {"gid": gid, "action_id": aid, "approved": approved, "draft": draft}, result)
+                    if approved:
+                        path.parent.mkdir(parents=True, exist_ok=True); path.write_text(draft, encoding="utf-8")
+                    result.update(approval_id=approval_id, agent_run_id=log_id, duplicate=False)
+            else:
+                receipt = OUT / "approvals" / f"{aid}.json"
+                if receipt.exists():
+                    old = json.loads(receipt.read_text(encoding="utf-8"))
+                    if old["approved"] != approved: raise ApprovalConflict("Решение по этому действию уже принято")
+                    return old | {"duplicate": True}
+                if approved:
+                    path.parent.mkdir(parents=True, exist_ok=True); path.write_text(draft, encoding="utf-8")
+                receipt.parent.mkdir(parents=True, exist_ok=True)
+                receipt.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        except (ApprovalConflict, OSError):
+            raise
+        except Exception as ex:
+            raise DatabaseError("Не удалось сохранить решение в PostgreSQL") from ex
+        finally:
+            if con: con.close()
+    return result
 
 
 def pretty(obj):

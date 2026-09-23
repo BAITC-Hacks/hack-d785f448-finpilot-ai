@@ -98,3 +98,27 @@ python serve.py               # карта и ассистент на http://loc
 ## Если сборка упала
 
 `Read-only file system` в Docker вместе с ошибкой записи `containerd ... meta.db` — сбой хранилища Docker, а не успешный запуск приложения. Проверьте свободное место на диске хоста, освободите место и перезапустите Docker Desktop. Не удаляйте постоянный том базы ради повторной сборки. Фактический статус проверки текущей версии — в [PROGRESS.md](PROGRESS.md).
+
+## Интеграционная проверка
+
+После готовности /api/health:
+
+```sh
+docker compose exec app python check.py --data data --out out --prev out_sample
+docker compose exec app python check_integration.py
+docker compose exec app python db_load.py --out out
+```
+
+check.py проверяет 28 условий, включая воспроизводимость. check_integration.py вызывает реальный HTTP API и читает PostgreSQL: оба случая направления, журнал с полными фактами и run_id, подтверждение и отказ, четыре одновременных повтора, конфликт решения и неверный ввод. Выполнять без OpenAI-ключа; тест создаёт два решения. Повтор не создаёт дубликатов решений, новые объяснения журналируются.
+
+Для проверки сохранности сравните /api/health до и после `docker compose down` и `docker compose up --build`. Том db_data не удалять. В Compose журнал хранится в PostgreSQL; JSONL используется только при автономном запуске без DATABASE_URL. Ошибки подключения/записи дают HTTP 503. Подтверждение и журнал пишутся одной транзакцией. Схема по-прежнему содержит шесть таблиц; approvals.action хранит стабильный идентификатор действия. Отказ тоже сохраняется через POST /api/approve; кнопке отказа текущего фронта ещё нужен этот вызов. Полный контракт — [API_CONTRACT.md](API_CONTRACT.md).
+
+## Replay и live
+
+Для replay оставить OPENAI_API_KEY пустым; аккаунт OpenAI не нужен. Для live ключ получают в своём проекте OpenAI Platform, сохраняют только в .env; OPENAI_MODEL задаёт точный идентификатор доступной аккаунту модели. Пересоздать app: `docker compose up -d --force-recreate app`. Ключ и модель читаются при запуске процесса. Не отправлять ключ в браузер и не коммитить .env.
+
+Два обязательных live-теста: объяснения GID 100000002398779100 (seed_reach=8) и 100000003684369100 (seed_reach=9) через /api/agent или /api/explain. Проверить _source=live:<model> и текст: направление от seed к выбранному узлу, а не наоборот. Обратная достижимость seed для этих узлов равна 0 и 1 соответственно. При ошибке модели fallback явно помечен как replay; такой ответ live-тест не проходит.
+
+В Responses API задан store=false для отключения хранения объекта ответа — [документация OpenAI](https://developers.openai.com/api/docs/guides/migrate-to-responses). Это не отменяет собственный журнал PostgreSQL.
+
+Источники остальных настроек: POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB задаёт запускающий приложение (пример рассчитан на локальное демо); APP_PORT выбирается локально; DATABASE_URL собирает Compose. Для прямого Python-запуска доступны DATA (папка parquet, data), OUT (результаты, out), PORT (8000), SKIP_PIPELINE=1 (использовать существующий graph.json), GRAPH_OUT (папка ассистента; serve.py задаёт из OUT). Compose эти дополнительные параметры не передаёт: его стандартный запуск каждый раз пересчитывает данные.
