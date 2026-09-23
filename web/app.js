@@ -599,7 +599,7 @@ async function load() {
 
 // ---------------------------------------------------------------- оболочка: проекты, стартовый экран, загрузка файла
 // Проекты и выбранный проект хранятся в localStorage только для удобства показа — это не база данных.
-// Загрузка файла — сценарий демо: расчёт делает pipeline.py заранее, страница показывает его результат (graph.json).
+// Демонстрационный кейс — результат pipeline.py на данных организаторов (graph.json); фронт ничего не считает и не имитирует.
 const STORE_PROJECTS = 'money-graph.projects';
 const STORE_CURRENT = 'money-graph.current';
 const store = {
@@ -619,17 +619,8 @@ const store = {
     }
   },
 };
-const shell = { projects: [], currentId: null, busy: false };
-
-const STAGES = (file) => [
-  `Чтение файла ${file}`,
-  'Построение графа переводов',
-  'Роли узлов по правилам R0–R8',
-  'След денег известных курьеров',
-  'Приоритет проверки и план охвата',
-  'Готово: результат пайплайна — out/graph.json',
-];
-const STAGE_MS = 550;
+const shell = { projects: [], currentId: null };
+const DATA_NOTE = 'данные организаторов, июль 2026';
 
 const currentProject = () => shell.projects.find((p) => p.id === shell.currentId) || null;
 
@@ -645,29 +636,21 @@ function renderProjects() {
       el('li', { class: p.id === shell.currentId ? 'active' : '', dataset: { id: p.id } },
         el('span', { class: 'name', title: p.name }, p.name),
         el('span', { class: 'status' },
-          p.status === 'ready' ? `${p.file} · узлов: ${fmtInt.format(g.nodes.length)}`
-            : p.status === 'processing' ? 'идёт расчёт…' : 'нет данных'))),
+          p.status === 'ready' ? `демонстрационный кейс · узлов: ${fmtInt.format(g.nodes.length)}` : 'кейс не открыт'))),
   );
 }
 
 function showHome() {
   const p = currentProject();
-  const composer = $('#composer');
-  const text = $('#composer-text');
+  const g = state.graph;
   $('#home').hidden = false;
   $('#analysis').hidden = true;
   $('#home-title').textContent = p ? p.name : 'Граф денег';
   $('#home-hint').textContent = p
-    ? 'Прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.'
-    : 'Создайте проект слева, затем прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.';
-  composer.classList.toggle('disabled', !p || shell.busy);
-  composer.classList.toggle('busy', shell.busy);
-  $('#file').disabled = !p || shell.busy;
-  if (!shell.busy) {
-    text.textContent = 'Прикрепите файл со списком транзакций';
-    text.classList.remove('filled');
-    $('#stages').hidden = true;
-  }
+    ? 'Откройте демонстрационный кейс — очередь подозрительных узлов, карта и карточки узлов.'
+    : 'Создайте проект слева, затем откройте демонстрационный кейс.';
+  $('#demo-counts').textContent = `${fmtInt.format(g.nodes.length)} узлов, ${fmtInt.format(g.edges.length)} переводов`;
+  $('#open-demo').disabled = !p;
 }
 
 function showAnalysis() {
@@ -676,7 +659,7 @@ function showAnalysis() {
   $('#home').hidden = true;
   $('#analysis').hidden = false;
   $('#analysis-title').textContent = p ? `Граф денег · ${p.name}` : 'Граф денег';
-  $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)}${p && p.file ? ` · файл: ${p.file}` : ''}`;
+  $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)} · ${DATA_NOTE}`;
   ensureMap();
 }
 
@@ -699,37 +682,17 @@ function openProject(id) {
 }
 
 function createProject(name) {
-  const project = { id: `p${Date.now().toString(36)}`, name, file: null, status: 'empty' };
+  const project = { id: `p${Date.now().toString(36)}`, name, status: 'empty' };
   shell.projects.unshift(project);
   openProject(project.id);
 }
 
-async function ingestFile(file) {
+// Открыть демонстрационный кейс: показать результат пайплайна для выбранного проекта.
+// Загрузка собственной выгрузки появится вместе с серверной обработкой; фронт расчёт не имитирует.
+function openDemo() {
   const p = currentProject();
-  if (!p || shell.busy) return;
-  shell.busy = true;
-  p.file = file.name;
-  p.status = 'processing';
-  saveProjects();
-  renderProjects();
-  showHome();
-  const text = $('#composer-text');
-  text.textContent = file.name;
-  text.classList.add('filled');
-  const stages = STAGES(file.name);
-  const list = $('#stages');
-  list.hidden = false;
-  list.replaceChildren(...stages.map((s) => el('li', {}, el('span', { class: 'dot' }), s)));
-  const items = list.children;
-  for (let i = 0; i < items.length; i++) {
-    items[i].classList.add('active');
-    await new Promise((r) => setTimeout(r, i === items.length - 1 ? STAGE_MS * 0.6 : STAGE_MS));
-    items[i].classList.remove('active');
-    items[i].classList.add('done');
-    items[i].firstChild.textContent = '✓';
-  }
+  if (!p) return;
   p.status = 'ready';
-  shell.busy = false;
   saveProjects();
   renderProjects();
   showAnalysis();
@@ -737,7 +700,7 @@ async function ingestFile(file) {
 
 function initShell() {
   shell.projects = (store.get(STORE_PROJECTS, []) || []).filter((p) => p && p.id && p.name)
-    .map((p) => ({ ...p, status: p.status === 'processing' ? 'empty' : p.status }));
+    .map((p) => ({ id: p.id, name: p.name, status: p.status === 'ready' ? 'ready' : 'empty' }));
   shell.currentId = store.get(STORE_CURRENT, null);
   if (!currentProject()) shell.currentId = null;
 
@@ -768,13 +731,9 @@ function initShell() {
 
   $('#projects').addEventListener('click', (e) => {
     const li = e.target.closest('li[data-id]');
-    if (li && !shell.busy) openProject(li.dataset.id);
+    if (li) openProject(li.dataset.id);
   });
-  $('#file').addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (file) ingestFile(file);
-    e.target.value = '';
-  });
+  $('#open-demo').addEventListener('click', openDemo);
 
   renderProjects();
   const p = currentProject();
@@ -784,6 +743,6 @@ function initShell() {
 
 load().catch((err) => {
   $('#home').hidden = false;
-  $('#composer').classList.add('disabled');
+  $('#open-demo').disabled = true;
   $('#home-hint').replaceChildren(el('span', { class: 'error' }, `Не удалось загрузить данные: ${err.message}. Запуск: python -m http.server 8000 --directory web`));
 });

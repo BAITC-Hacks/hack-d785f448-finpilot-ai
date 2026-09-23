@@ -30,15 +30,11 @@
     <div class="composer-wrap">
       <h2 id="home-title">Граф денег</h2>
       <p class="muted" id="home-hint">Создайте проект слева, затем прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.</p>
-      <label class="composer" id="composer">
-        <input type="file" id="file" hidden accept=".csv,.parquet,.zip,.json,.xlsx">
-        <span class="clip" title="Прикрепить файл">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </span>
-        <span class="composer-text" id="composer-text">Прикрепите файл со списком транзакций</span>
-      </label>
-      <p class="muted small">Выгрузка переводов: .csv, .parquet, .zip. Данные не покидают этот компьютер.</p>
-      <ol class="stages" id="stages" hidden></ol>
+      <div class="demo-card">
+        <div class="demo-title">Демонстрационный кейс</div>
+        <p class="demo-note">Результаты рассчитаны на предоставленных организаторами данных: <span id="demo-counts">…</span>. Расчёт выполнен пайплайном заранее. Загрузка собственной выгрузки появится после подключения серверной обработки.</p>
+        <button type="button" class="big" id="open-demo" disabled>Открыть демонстрационный кейс</button>
+      </div>
     </div>
   </section>
 
@@ -84,8 +80,8 @@
     </main>
   </section>
 </div>
-<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-<script>window.vis || document.write('<script src="vendor/vis-network.min.js"><\/script>');</script>
+<script src="vendor/vis-network.min.js"></script>
+<script>window.vis || document.write('<script src="https://unpkg.com/vis-network@10.1.2/standalone/umd/vis-network.min.js"><\/script>');</script>
 <script src="app.js"></script>
 </body>
 </html>

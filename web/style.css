@@ -137,20 +137,11 @@ body { display: flex; height: 100vh; overflow: hidden; }
 .composer-wrap h2 { margin: 0 0 8px; font-size: 26px; font-weight: 600; }
 .composer-wrap .muted { font-size: 14px; margin: 0 0 20px; }
 .composer-wrap .small { font-size: 12px; margin-top: 10px; }
-.composer { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid #d0d0d5; border-radius: 26px; background: #fff; box-shadow: 0 4px 18px rgba(0, 0, 0, .06); cursor: pointer; text-align: left; }
-.composer:hover { border-color: #999; }
-.composer.disabled { opacity: .55; cursor: not-allowed; }
-.composer.busy { cursor: progress; }
-.clip { display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 50%; background: #f1f1f4; color: #333; flex: 0 0 auto; }
-.composer-text { color: #666; font-size: 15px; flex: 1 1 auto; }
-.composer-text.filled { color: #1d1d1f; }
-.stages { list-style: none; margin: 22px auto 0; padding: 0; text-align: left; width: min(440px, 100%); }
-.stages li { display: flex; align-items: center; gap: 10px; padding: 6px 0; color: #888; font-size: 14px; }
-.stages li.done { color: #1d1d1f; }
-.stages li.active { color: #1d1d1f; font-weight: 600; }
-.stages .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #ccc; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
-.stages li.done .dot { background: #1a7f37; border-color: #1a7f37; color: #fff; }
-.stages li.active .dot { border-color: #1d1d1f; border-top-color: transparent; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.demo-card { text-align: left; padding: 18px 20px; border: 1px solid #d0d0d5; border-radius: 16px; background: #fff; box-shadow: 0 4px 18px rgba(0, 0, 0, .06); }
+.demo-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+.demo-note { margin: 0 0 14px; font-size: 13px; color: #444; }
+.big { width: 100%; padding: 10px 14px; border: 1px solid #1d1d1f; border-radius: 10px; background: #1d1d1f; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.big:hover { background: #333; }
+.big:disabled { opacity: .45; cursor: not-allowed; }
 .analysis { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .analysis[hidden] { display: none; }
