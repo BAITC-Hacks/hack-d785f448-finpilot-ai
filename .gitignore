@@ -12,3 +12,4 @@ __pycache__/
 *.key
 .DS_Store
 Thumbs.db
+projects/

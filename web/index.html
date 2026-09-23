@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Граф денег — очередь проверки</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,13 +14,17 @@
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     Новый проект
   </button>
-  <form class="new-form" id="new-project-form" hidden autocomplete="off">
-    <input id="project-name" type="text" placeholder="Название проекта" maxlength="60">
+  <form class="new-form" id="new-project-form" hidden autocomplete="off" enctype="multipart/form-data">
+    <input id="project-name" name="name" type="text" placeholder="Название проекта" maxlength="60">
+    <label class="file-label">nodes.parquet <input type="file" name="nodes" accept=".parquet" required></label>
+    <label class="file-label">edges.parquet <input type="file" name="edges" accept=".parquet" required></label>
+    <label class="file-label">transactions.parquet <input type="file" name="transactions" accept=".parquet" required></label>
     <div class="new-form-actions">
-      <button type="submit" class="primary">Создать</button>
+      <button type="submit" class="primary">Рассчитать</button>
       <button type="button" data-cancel>Отмена</button>
     </div>
     <div class="form-err" id="project-err"></div>
+    <div class="muted" id="project-progress"></div>
   </form>
   <ul class="projects" id="projects"></ul>
   <div class="side-foot muted">Проверка транзакционного графа. Код считает, ассистент объясняет.</div>
@@ -29,11 +34,11 @@
   <section class="home" id="home">
     <div class="composer-wrap">
       <h2 id="home-title">Граф денег</h2>
-      <p class="muted" id="home-hint">Создайте проект слева, затем прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.</p>
-      <div class="demo-card">
-        <div class="demo-title">Демонстрационный кейс</div>
-        <p class="demo-note">Результаты рассчитаны на предоставленных организаторами данных: <span id="demo-counts">…</span>. Расчёт выполнен пайплайном заранее. Загрузка собственной выгрузки появится после подключения серверной обработки.</p>
-        <button type="button" class="big" id="open-demo" disabled>Открыть демонстрационный кейс</button>
+      <p class="muted" id="home-hint">Выберите проект слева или создайте новый: три файла выгрузки (nodes, edges, transactions в parquet) — расчёт занимает около 10 секунд.</p>
+      <div class="demo-card" id="project-card" hidden>
+        <div class="demo-title" id="project-card-title">Проект</div>
+        <p class="demo-note" id="project-card-note"></p>
+        <button type="button" class="big" id="open-demo">Открыть результат</button>
       </div>
     </div>
   </section>

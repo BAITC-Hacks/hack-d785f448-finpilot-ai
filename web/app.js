@@ -41,7 +41,7 @@ const FADED = 0.12;
 
 const state = {
   graph: null, byId: new Map(), ranked: [], rank: new Map(), inc: new Map(), out: new Map(), selected: null,
-  network: null, nodesDS: null, edgesDS: null,
+  network: null, nodesDS: null, edgesDS: null, graphUrl: null, project: 'main', mapFailed: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -87,10 +87,13 @@ function renderQueue() {
       ),
     ),
   );
-  tbody.addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-gid]');
-    if (tr) select(tr.dataset.gid);
-  });
+  if (!tbody.dataset.bound) {
+    tbody.dataset.bound = '1';
+    tbody.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-gid]');
+      if (tr) select(tr.dataset.gid);
+    });
+  }
 }
 
 // ---------------------------------------------------------------- экран 4: план охвата
@@ -500,10 +503,10 @@ async function runAssistant(action, gid) {
   }
   const q = encodeURIComponent(gid);
   const path = {
-    explain: `/api/explain?gid=${q}`,
-    whatif: `/api/whatif?exclude=${q}`,
-    request: `/api/request?gid=${q}`,
-    confirm: `/api/request?gid=${q}&confirm=1`,
+    explain: `/api/explain?gid=${q}&project=${state.project || 'main'}`,
+    whatif: `/api/whatif?exclude=${q}&project=${state.project || 'main'}`,
+    request: `/api/request?gid=${q}&project=${state.project || 'main'}`,
+    confirm: `/api/request?gid=${q}&confirm=1&project=${state.project || 'main'}`,
   }[action];
   const buttons = document.querySelectorAll('#card [data-ai]');
   buttons.forEach((b) => { b.disabled = true; });
@@ -574,11 +577,12 @@ function select(gid) {
 }
 
 // ---------------------------------------------------------------- загрузка
-async function load() {
-  const res = await fetch('graph.json');
-  if (!res.ok) throw new Error(`graph.json: HTTP ${res.status}`);
+async function loadGraph(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   const g = await res.json();
   state.graph = g;
+  state.byId = new Map(); state.out = new Map(); state.inc = new Map(); state.rank = new Map();
   for (const n of g.nodes) state.byId.set(n.id, n);
   for (const e of g.edges) {
     if (!state.out.has(e.source)) state.out.set(e.source, []);
@@ -588,78 +592,81 @@ async function load() {
   }
   state.ranked = [...g.nodes].sort((a, b) => b.priority - a.priority);
   state.ranked.forEach((n, i) => state.rank.set(n.id, i + 1));
+  if (state.network) { state.network.destroy(); state.network = null; }
+  state.mapFailed = false;
+  state.selected = null;
+  closeCard();
   renderQueue();
   renderPlan();
   renderLevels();
+}
+
+async function load() {
   setupTabs();
   setupSearch();
   setupCard();
-  initShell();
+  await initShell();
 }
 
-// ---------------------------------------------------------------- оболочка: проекты, стартовый экран, загрузка файла
-// Проекты и выбранный проект хранятся в localStorage только для удобства показа — это не база данных.
-// Демонстрационный кейс — результат pipeline.py на данных организаторов (graph.json); фронт ничего не считает и не имитирует.
-const STORE_PROJECTS = 'money-graph.projects';
-const STORE_CURRENT = 'money-graph.current';
-const store = {
-  get(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch {
-      return fallback;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      /* приватный режим или запрет хранилища — работаем в памяти */
-    }
-  },
-};
-const shell = { projects: [], currentId: null };
-const DATA_NOTE = 'данные организаторов, июль 2026';
-
+// ---------------------------------------------------------------- оболочка: проекты и загрузка выгрузки
+// Список проектов отдаёт сервер (serve.py): основной — данные из data/, остальные — загруженные через форму.
+// Без сервера (статический хостинг) остаётся один проект из graph.json. Фронт ничего не считает.
+const shell = { projects: [], currentId: null, api: true };
 const currentProject = () => shell.projects.find((p) => p.id === shell.currentId) || null;
+const projectNote = (p) => `${fmtInt.format(p.nodes || 0)} узлов · ${fmtInt.format(p.edges || 0)} переводов`;
+let DATA_NOTE = '';
 
-function saveProjects() {
-  store.set(STORE_PROJECTS, shell.projects);
-  store.set(STORE_CURRENT, shell.currentId);
+async function fetchProjects() {
+  try {
+    const res = await fetch(`${API}/api/projects`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    shell.api = true;
+    return (await res.json()).projects;
+  } catch {
+    shell.api = false;
+    return [{ id: 'main', name: 'Результат расчёта', status: 'ready', graph_url: 'graph.json' }];
+  }
 }
 
 function renderProjects() {
-  const g = state.graph;
   $('#projects').replaceChildren(
     ...shell.projects.map((p) =>
       el('li', { class: p.id === shell.currentId ? 'active' : '', dataset: { id: p.id } },
         el('span', { class: 'name', title: p.name }, p.name),
-        el('span', { class: 'status' },
-          p.status === 'ready' ? `демонстрационный кейс · узлов: ${fmtInt.format(g.nodes.length)}` : 'кейс не открыт'))),
+        el('span', { class: 'status' }, p.status === 'ready' ? projectNote(p) : p.status === 'error' ? 'ошибка расчёта' : 'расчёт…'))),
   );
 }
 
 function showHome() {
   const p = currentProject();
-  const g = state.graph;
   $('#home').hidden = false;
   $('#analysis').hidden = true;
   $('#home-title').textContent = p ? p.name : 'Граф денег';
-  $('#home-hint').textContent = p
-    ? 'Откройте демонстрационный кейс — очередь подозрительных узлов, карта и карточки узлов.'
-    : 'Создайте проект слева, затем откройте демонстрационный кейс.';
-  $('#demo-counts').textContent = `${fmtInt.format(g.nodes.length)} узлов, ${fmtInt.format(g.edges.length)} переводов`;
-  $('#open-demo').disabled = !p;
+  $('#project-card').hidden = !p;
+  if (p) {
+    $('#project-card-title').textContent = p.name;
+    $('#project-card-note').textContent = p.status === 'ready'
+      ? `${projectNote(p)} · роли, приоритет и план охвата рассчитаны${p.check_ok === false ? ' · проверка результата нашла расхождения' : ''}`
+      : p.error || 'расчёт не завершён';
+    $('#open-demo').disabled = p.status !== 'ready';
+  }
 }
 
-function showAnalysis() {
+async function showAnalysis() {
   const p = currentProject();
+  if (!p || p.status !== 'ready') { showHome(); return; }
+  if (state.graphUrl !== p.graph_url) {
+    $('#home-hint').textContent = 'Загружаю результат…';
+    await loadGraph(p.graph_url);
+    state.graphUrl = p.graph_url;
+    state.project = p.id;
+  }
   const g = state.graph;
+  DATA_NOTE = p.created_at ? `рассчитано ${p.created_at.replace('T', ' ').slice(0, 16)}` : '';
   $('#home').hidden = true;
   $('#analysis').hidden = false;
-  $('#analysis-title').textContent = p ? `Граф денег · ${p.name}` : 'Граф денег';
-  $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)} · ${DATA_NOTE}`;
+  $('#analysis-title').textContent = `Граф денег · ${p.name}`;
+  $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)}${DATA_NOTE ? ' · ' + DATA_NOTE : ''}`;
   ensureMap();
 }
 
@@ -674,75 +681,55 @@ function ensureMap() {
 
 function openProject(id) {
   shell.currentId = id;
-  saveProjects();
+  try { localStorage.setItem('money-graph.current', id); } catch { /* без хранилища */ }
   renderProjects();
-  const p = currentProject();
-  if (p && p.status === 'ready') showAnalysis();
-  else showHome();
+  showHome();
 }
 
-function createProject(name) {
-  const project = { id: `p${Date.now().toString(36)}`, name, status: 'empty' };
-  shell.projects.unshift(project);
-  openProject(project.id);
+async function createProject(form) {
+  const err = $('#project-err'); const progress = $('#project-progress'); const btn = form.querySelector('button.primary');
+  err.textContent = '';
+  if (!shell.api) { err.textContent = 'Расчёт новых проектов требует сервер: python serve.py (или docker compose up).'; return; }
+  btn.disabled = true; progress.textContent = 'Отправляю файлы и считаю роли — около 10 секунд…';
+  try {
+    const res = await fetch(`${API}/api/projects`, { method: 'POST', body: new FormData(form) });
+    const meta = await res.json();
+    if (!res.ok) throw new Error(meta.error || meta.log || `HTTP ${res.status}`);
+    form.hidden = true; form.reset(); progress.textContent = '';
+    shell.projects = await fetchProjects();
+    openProject(meta.id);
+    await showAnalysis();
+  } catch (e) {
+    err.textContent = `Не удалось рассчитать: ${e.message}`; progress.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
-// Открыть демонстрационный кейс: показать результат пайплайна для выбранного проекта.
-// Загрузка собственной выгрузки появится вместе с серверной обработкой; фронт расчёт не имитирует.
-function openDemo() {
-  const p = currentProject();
-  if (!p) return;
-  p.status = 'ready';
-  saveProjects();
-  renderProjects();
-  showAnalysis();
-}
-
-function initShell() {
-  shell.projects = (store.get(STORE_PROJECTS, []) || []).filter((p) => p && p.id && p.name)
-    .map((p) => ({ id: p.id, name: p.name, status: p.status === 'ready' ? 'ready' : 'empty' }));
-  shell.currentId = store.get(STORE_CURRENT, null);
-  if (!currentProject()) shell.currentId = null;
+async function initShell() {
+  shell.projects = await fetchProjects();
+  let saved = null;
+  try { saved = localStorage.getItem('money-graph.current'); } catch { /* без хранилища */ }
+  shell.currentId = shell.projects.some((p) => p.id === saved) ? saved : (shell.projects[0] ? shell.projects[0].id : null);
 
   const form = $('#new-project-form');
   const nameInput = $('#project-name');
-  const err = $('#project-err');
-  $('#new-project').addEventListener('click', () => {
-    form.hidden = false;
-    nameInput.value = '';
-    err.textContent = '';
-    nameInput.classList.remove('invalid');
-    nameInput.focus();
-  });
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const name = nameInput.value.trim();
-    if (!name) {
-      err.textContent = 'Введите название проекта — без него проект не создаётся.';
-      nameInput.classList.add('invalid');
-      nameInput.focus();
-      return;
-    }
-    form.hidden = true;
-    createProject(name);
-  });
+  $('#new-project').addEventListener('click', () => { form.hidden = false; $('#project-err').textContent = ''; nameInput.focus(); });
+  form.addEventListener('submit', (e) => { e.preventDefault(); createProject(form); });
   form.querySelector('[data-cancel]').addEventListener('click', () => { form.hidden = true; });
-  nameInput.addEventListener('input', () => { nameInput.classList.remove('invalid'); err.textContent = ''; });
-
   $('#projects').addEventListener('click', (e) => {
     const li = e.target.closest('li[data-id]');
-    if (li) openProject(li.dataset.id);
+    if (li) { openProject(li.dataset.id); showAnalysis(); }
   });
-  $('#open-demo').addEventListener('click', openDemo);
+  $('#open-demo').addEventListener('click', () => showAnalysis());
 
   renderProjects();
   const p = currentProject();
-  if (p && p.status === 'ready') showAnalysis();
+  if (p && p.status === 'ready') await showAnalysis();
   else showHome();
 }
 
 load().catch((err) => {
   $('#home').hidden = false;
-  $('#open-demo').disabled = true;
-  $('#home-hint').replaceChildren(el('span', { class: 'error' }, `Не удалось загрузить данные: ${err.message}. Запуск: python -m http.server 8000 --directory web`));
+  $('#home-hint').replaceChildren(el('span', { class: 'error' }, `Не удалось загрузить данные: ${err.message}. Запуск: python serve.py`));
 });

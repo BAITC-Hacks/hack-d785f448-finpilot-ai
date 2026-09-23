@@ -35,6 +35,8 @@ docker compose exec db psql -U graph -d graph -c "select step, gid, role, cumula
 
 В интерфейсе: очередь топ-30 → клик по узлу → карточка → «Объяснить» (запись в `agent_runs`) → «Сформировать запрос» → «Подтвердить» (запись в `approvals`).
 
+Своя выгрузка: «Новый проект» → название и три файла `nodes.parquet`, `edges.parquet`, `transactions.parquet` (схема как у данных кейса) → «Рассчитать». Сервер кладёт файлы в `projects/<id>/data/`, прогоняет пайплайн и проверку (около 10 секунд), результат появляется в списке проектов слева и, при заданном `DATABASE_URL`, в базе как отдельный `run_id`. Каталог `projects/` смонтирован на хост и не попадает в Git.
+
 Остановить: `docker compose down`. Сбросить базу и применить схему заново: `docker compose down -v`.
 Результаты прогона лежат на хосте в `out/` (том смонтирован).
 
@@ -43,7 +45,7 @@ docker compose exec db psql -U graph -d graph -c "select step, gid, role, cumula
 ```
 браузер ──HTTP 8000──▶ app (python: serve.py)
                          ├─ web/            статика: карта, очередь, карточка узла (читает graph.json)
-                         ├─ /api/*          ассистент: explain / decide / whatif / request (assistant.py)
+                         ├─ /api/*          ассистент: explain / decide / whatif / request (assistant.py); /api/projects — список и загрузка выгрузок
                          ├─ pipeline.py, addons_v3.py, check.py   расчёт из data/*.parquet → out/
                          └─ db_load.py ──SQL──▶ db (PostgreSQL 16, только внутри compose-сети, порт наружу не открыт)
 ```
