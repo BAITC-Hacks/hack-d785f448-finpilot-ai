@@ -69,15 +69,57 @@ def main():
                     ready = database["ok"] if database.get("configured") else True
                     self._json(200 if ready else 503, {"ok": ready, "mode": M.mode, "model": M.model, "nodes": len(G.nodes), "db": database})
                     return
-                elif u.path == "/api/db/health": body = db_health()
+                elif u.path == "/api/db/health":
+                    body = db_health(); self._json(200 if body["ok"] else 503, body); return
                 elif u.path == "/api/explain": body = assistant.scene_explain(G, M, q["gid"])
                 elif u.path == "/api/decide": body = assistant.scene_decide(G, M, int(q.get("k", 3)))
                 elif u.path == "/api/whatif": body = assistant.scene_whatif(G, M, exclude=q.get("exclude"), add_seed=q.get("add_seed"))
                 elif u.path == "/api/request": body = assistant.scene_request(G, M, q["gid"], confirm=q.get("confirm") == "1")
-                else: self.send_error(404); return
-                self._json(200, body)
+                else: self._json(404, {"error": "Маршрут не найден"}); return
+                self._result(body)
             except Exception as ex:
-                self._json(400, {"error": f"{type(ex).__name__}: {ex}"})
+                self._error(ex)
+
+        def do_POST(self):
+            # Браузер работает на том же origin. Не принимаем подтверждения с чужих страниц.
+            origin = self.headers.get("Origin")
+            if origin and origin != "http://" + self.headers.get("Host", ""):
+                self._json(403, {"error": "Чужой Origin"}); return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 16384: raise ValueError("Неверный размер JSON")
+                q = json.loads(self.rfile.read(size))
+                if not isinstance(q, dict): raise ValueError("Ожидается JSON object")
+                gid = q.get("gid")
+                if not isinstance(gid, str): raise ValueError("gid передаётся строкой")
+                G.node(gid)
+                path = urlparse(self.path).path
+                if path == "/api/agent":
+                    action = q.get("action", "explain")
+                    if action == "explain": body = assistant.scene_explain(G, M, gid)
+                    elif action == "request": body = assistant.scene_request(G, M, gid)
+                    else: raise ValueError("action: explain или request")
+                elif path == "/api/approve":
+                    if not isinstance(q.get("approved"), bool): raise ValueError("approved должен быть boolean")
+                    if not isinstance(q.get("action_id"), str): raise ValueError("Нужен action_id черновика")
+                    body = assistant.scene_request(G, M, gid, decision=q["approved"], action_id=q["action_id"])
+                else: self._json(404, {"error": "Маршрут не найден"}); return
+                self._result(body)
+            except Exception as ex:
+                self._error(ex)
+
+        def _result(self, body):
+            src = str(body.get("answer", {}).get("_source", "replay"))
+            mode = "live" if src.startswith(("live:", "nvidia:")) else "replay"
+            self._json(200, body | {"mode": mode, "model": M.model if mode == "live" else None})
+
+        def _error(self, ex):
+            if isinstance(ex, assistant.DatabaseError): code = 503
+            elif isinstance(ex, assistant.ApprovalConflict): code = 409
+            elif isinstance(ex, KeyError): code = 404
+            elif isinstance(ex, (ValueError, TypeError)): code = 400
+            else: code = 500
+            self._json(code, {"error": str(ex) if code != 500 else "Внутренняя ошибка сервера"})
 
         def _json(self, code, body):
             data = json.dumps(body, ensure_ascii=False).encode()
