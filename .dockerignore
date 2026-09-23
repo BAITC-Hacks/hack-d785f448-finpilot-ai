@@ -1,6 +1,7 @@
 .git
 out/
 out_prev/
+projects/
 .venv/
 venv/
 __pycache__/

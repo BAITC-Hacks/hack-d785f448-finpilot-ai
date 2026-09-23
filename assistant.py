@@ -50,6 +50,7 @@ def kzt(x):
 # ------------------------------------------------------------------ факты (детерминированный слой)
 class Graph:
     def __init__(self, out=OUT):
+        self.out = Path(out)
         g = json.load(open(out / "graph.json", encoding="utf-8"))
         self.nodes = {n["id"]: n for n in g["nodes"]}; self.edges = g["edges"]
         self.plan = g.get("plan", []); self.plan_meta = g.get("plan_meta", {})
@@ -268,50 +269,50 @@ def _db():
         raise DatabaseError("PostgreSQL недоступна; операция не подтверждена") from ex
 
 
-def current_run_id():
-    path = OUT / "nodes_roles.csv"
+def current_run_id(out=OUT):
+    path = out / "nodes_roles.csv"
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16] if path.exists() else None
 
 
-def _insert_run(cur, kind, payload, answer):
+def _insert_run(cur, kind, payload, answer, out=OUT):
     src = str(answer.get("_source", "replay"))
     mode = "replay" if src.startswith(("replay", "template")) else "live"
     cur.execute("insert into agent_runs (run_id, kind, mode, model, facts, output) values (%s,%s,%s,%s,%s,%s) returning id",
-                (current_run_id(), kind, mode, src.split(":", 1)[1] if mode == "live" and ":" in src else None,
+                (current_run_id(out), kind, mode, src.split(":", 1)[1] if mode == "live" and ":" in src else None,
                  json.dumps(payload, ensure_ascii=False), json.dumps(answer, ensure_ascii=False)))
     return cur.fetchone()[0]
 
 
-def log_run(kind, payload, answer):
+def log_run(kind, payload, answer, out=OUT):
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, "input": payload, "answer": answer}
     con = _db()
     log_id = None
     if con:
         try:
             with con, con.cursor() as cur:
-                log_id = _insert_run(cur, kind, payload, answer)
+                log_id = _insert_run(cur, kind, payload, answer, out)
         except Exception as ex:
             raise DatabaseError("Не удалось записать прогон в PostgreSQL") from ex
         finally:
             con.close()
     # В Compose PostgreSQL — источник журнала; локальный JSONL нужен автономному CLI.
     if not con:
-        OUT.mkdir(exist_ok=True)
-        with open(OUT / "agent_runs.jsonl", "a", encoding="utf-8") as fh: fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        out.mkdir(exist_ok=True)
+        with open(out / "agent_runs.jsonl", "a", encoding="utf-8") as fh: fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return log_id
 
 
 # ------------------------------------------------------------------ сцены
 def scene_explain(G, M, gid):
     f = G.facts(gid); ans = M.ask(f"explain:{gid}", "Объясни аналитику этот узел и предложи следующий шаг.", f, SCHEMA)
-    log_id = log_run("explain", f, ans); return {"facts": f, "answer": ans, "agent_run_id": log_id}
+    log_id = log_run("explain", f, ans, G.out); return {"facts": f, "answer": ans, "agent_run_id": log_id}
 
 
 def scene_decide(G, M, k=3):
     cands = [G.facts(n["id"]) for n in G.top(k)]
     ans = M.ask(f"decide:{k}", f"Из {k} узлов с наибольшим приоритетом выбери, кого проверять первым, и объясни. Учитывай след денег, роль, метки и пробелы в данных.",
                 {"candidates": cands}, DECIDE_SCHEMA)
-    log_run("decide", {"candidates": cands}, ans); return {"candidates": [{"gid": c["gid"], "role": c["role"], "priority": c["priority"], "seed_money_kzt": c["seed_money_kzt"]} for c in cands], "answer": ans}
+    log_run("decide", {"candidates": cands}, ans, G.out); return {"candidates": [{"gid": c["gid"], "role": c["role"], "priority": c["priority"], "seed_money_kzt": c["seed_money_kzt"]} for c in cands], "answer": ans}
 
 
 def scene_whatif(G, M, exclude=None, add_seed=None):
@@ -322,7 +323,7 @@ def scene_whatif(G, M, exclude=None, add_seed=None):
     if ans.get("_source", "").startswith("template"):
         ans["summary"] = (f"После изменения ({'исключён ' + str(exclude) if exclude else 'добавлен seed ' + str(add_seed)}) в топ-10 вошли {len(res['entered'])} узлов и вышли {len(res['left'])}; "
                           f"след денег пересчитан с сохранением массы, роли не менялись.")
-    log_run("whatif", res["change"], ans); return res | {"answer": ans}
+    log_run("whatif", res["change"], ans, G.out); return res | {"answer": ans}
 
 
 _approval_lock = Lock()
@@ -330,7 +331,8 @@ _approval_lock = Lock()
 
 def scene_request(G, M, gid, confirm=False, decision=None, action_id=None, reviewer="analyst"):
     draft = G.draft_request(gid)
-    aid = hashlib.sha256(f"{current_run_id()}:{gid}:{draft}".encode()).hexdigest()
+    rid = current_run_id(G.out)
+    aid = hashlib.sha256(f"{rid}:{gid}:{draft}".encode()).hexdigest()
     if action_id is not None and action_id != aid:
         raise ApprovalConflict("Черновик изменился: запросите его заново")
     if decision is None and not confirm:
@@ -338,7 +340,7 @@ def scene_request(G, M, gid, confirm=False, decision=None, action_id=None, revie
                 "note": "Запрос сохраняется локально только после подтверждения человеком; внешней отправки нет."}
     approved = bool(confirm) if decision is None else decision
     if not isinstance(approved, bool): raise ValueError("approved должен быть boolean")
-    path = OUT / "requests" / f"request_{gid}.md"
+    path = G.out / "requests" / f"request_{gid}.md"
     result = {"status": "saved" if approved else "rejected", "action_id": aid, "draft": draft, "approved": approved}
     if approved: result["path"] = str(path)
     with _approval_lock:
@@ -348,21 +350,21 @@ def scene_request(G, M, gid, confirm=False, decision=None, action_id=None, revie
                 with con, con.cursor() as cur:
                     # Одна транзакция и блокировка на действие защищают также параллельные запросы.
                     cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (aid,))
-                    cur.execute("select id, approved from approvals where run_id=%s and action=%s order by id limit 1", (current_run_id(), aid))
+                    cur.execute("select id, approved from approvals where run_id=%s and action=%s order by id limit 1", (rid, aid))
                     existing = cur.fetchone()
                     if existing:
                         if existing[1] != approved: raise ApprovalConflict("Решение по этому действию уже принято")
                         return result | {"approval_id": existing[0], "duplicate": True}
                     cur.execute("insert into approvals (run_id,gid,action,approved,reviewer) values (%s,%s,%s,%s,%s) returning id",
-                                (current_run_id(), gid, aid, approved, reviewer))
+                                (rid, gid, aid, approved, reviewer))
                     approval_id = cur.fetchone()[0]
                     log_id = _insert_run(cur, "request_approved" if approved else "request_rejected",
-                                         {"gid": gid, "action_id": aid, "approved": approved, "draft": draft}, result)
+                                         {"gid": gid, "action_id": aid, "approved": approved, "draft": draft}, result, G.out)
                     if approved:
                         path.parent.mkdir(parents=True, exist_ok=True); path.write_text(draft, encoding="utf-8")
                     result.update(approval_id=approval_id, agent_run_id=log_id, duplicate=False)
             else:
-                receipt = OUT / "approvals" / f"{aid}.json"
+                receipt = G.out / "approvals" / f"{aid}.json"
                 if receipt.exists():
                     old = json.loads(receipt.read_text(encoding="utf-8"))
                     if old["approved"] != approved: raise ApprovalConflict("Решение по этому действию уже принято")

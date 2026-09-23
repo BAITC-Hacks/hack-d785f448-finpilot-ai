@@ -75,16 +75,20 @@ def create_project(fields, files):
     for script in ("pipeline.py", "addons_v3.py", "check.py"):
         r = subprocess.run([sys.executable, str(ROOT / script), "--data", str(pdir / "data"), "--out", str(pdir / "out")], capture_output=True, text=True)
         log.append(f"$ {script}\n{r.stdout[-3000:]}{r.stderr[-3000:]}")
-        if r.returncode and script != "check.py":
+        if r.returncode:
             meta.update(status="error", error=f"{script}: код {r.returncode}", log="\n".join(log)[-6000:])
             json.dump(meta, open(pdir / "meta.json", "w", encoding="utf-8"), ensure_ascii=False); return meta
         if script == "check.py": meta["check_ok"] = r.returncode == 0
     shutil.copy(pdir / "out" / "graph.json", pdir / "graph.json")
     rm = json.load(open(pdir / "out" / "run_meta.json", encoding="utf-8"))
+    if os.environ.get("DATABASE_URL"):
+        loaded = subprocess.run([sys.executable, str(ROOT / "db_load.py"), "--out", str(pdir / "out")], capture_output=True)
+        if loaded.returncode:
+            meta.update(status="error", error="Не удалось сохранить результат в PostgreSQL")
+            json.dump(meta, open(pdir / "meta.json", "w", encoding="utf-8"), ensure_ascii=False)
+            raise RuntimeError(meta["error"])
     meta.update(status="ready", nodes=rm.get("nodes"), edges=rm.get("edges"), log="\n".join(log)[-6000:])
     json.dump(meta, open(pdir / "meta.json", "w", encoding="utf-8"), ensure_ascii=False)
-    if os.environ.get("DATABASE_URL"):
-        subprocess.run([sys.executable, str(ROOT / "db_load.py"), "--out", str(pdir / "out")])
     return meta
 
 
@@ -127,9 +131,10 @@ def main():
 
     def graph_for(q):
         pid = q.get("project", "main")
+        if not isinstance(pid, str) or not re.fullmatch(r"[\w-]+", pid): raise ValueError("Неверный project")
         if pid not in graphs:
             pdir = PROJECTS / pid
-            if not re.fullmatch(r"[\w-]+", pid) or not (pdir / "out" / "graph.json").exists(): raise KeyError(f"проект {pid} не найден")
+            if (project_meta(pdir) or {}).get("status") != "ready" or not (pdir / "out" / "graph.json").exists(): raise KeyError(f"проект {pid} не готов или не найден")
             graphs[pid] = assistant.Graph(pdir / "out")
         return graphs[pid]
     print(f"serve: ассистент в режиме {M.mode}{' ' + M.model if M.model else ''}")
@@ -186,17 +191,18 @@ def main():
                 if not isinstance(q, dict): raise ValueError("Ожидается JSON object")
                 gid = q.get("gid")
                 if not isinstance(gid, str): raise ValueError("gid передаётся строкой")
-                G.node(gid)
+                selected_graph = graph_for(q)
+                selected_graph.node(gid)
                 path = urlparse(self.path).path
                 if path == "/api/agent":
                     action = q.get("action", "explain")
-                    if action == "explain": body = assistant.scene_explain(G, M, gid)
-                    elif action == "request": body = assistant.scene_request(G, M, gid)
+                    if action == "explain": body = assistant.scene_explain(selected_graph, M, gid)
+                    elif action == "request": body = assistant.scene_request(selected_graph, M, gid)
                     else: raise ValueError("action: explain или request")
                 elif path == "/api/approve":
                     if not isinstance(q.get("approved"), bool): raise ValueError("approved должен быть boolean")
                     if not isinstance(q.get("action_id"), str): raise ValueError("Нужен action_id черновика")
-                    body = assistant.scene_request(G, M, gid, decision=q["approved"], action_id=q["action_id"])
+                    body = assistant.scene_request(selected_graph, M, gid, decision=q["approved"], action_id=q["action_id"])
                 else: self._json(404, {"error": "Маршрут не найден"}); return
                 self._result(body)
             except Exception as ex:

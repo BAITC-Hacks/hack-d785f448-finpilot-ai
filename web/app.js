@@ -42,6 +42,7 @@ const FADED = 0.12;
 const state = {
   graph: null, byId: new Map(), ranked: [], rank: new Map(), inc: new Map(), out: new Map(), selected: null,
   network: null, nodesDS: null, edgesDS: null, graphUrl: null, project: 'main', mapFailed: false,
+  approval: null, aiRequest: 0,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -387,7 +388,7 @@ function cardLimits(n) {
 
 // ---------------------------------------------------------------- ассистент в карточке (python assistant.py serve)
 // Страница не зависит от ассистента: сервер не отвечает — подсказка, остальное работает.
-const API = window.API_BASE || (location.protocol === 'file:' ? 'http://127.0.0.1:8765' : location.origin);
+const API = location.origin;
 const NEXT_STEP_RU = {
   check_neighbors: 'проверить контрагентов',
   request_data: 'запросить данные',
@@ -396,15 +397,15 @@ const NEXT_STEP_RU = {
   none: 'действий не требуется',
 };
 const assistant = { up: null, mode: null, model: null };
-const NOT_RUNNING = 'ассистент не запущен: python assistant.py serve';
+const NOT_RUNNING = 'Ассистент недоступен. Проверьте готовность приложения.';
 
-async function api(path, timeoutMs = 60000) {
+async function api(path, timeoutMs = 60000, options = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     let res;
     try {
-      res = await fetch(API + path, { signal: ctrl.signal });
+      res = await fetch(API + path, { ...options, signal: ctrl.signal });
     } catch (err) {
       throw Object.assign(new Error(err.name === 'AbortError' ? 'ассистент не ответил вовремя' : NOT_RUNNING), { offline: true });
     }
@@ -493,30 +494,38 @@ const AI_VIEW = {
     el('div', { class: 'ok' }, `Запрос подтверждён аналитиком и сохранён: ${b.path}`),
     el('pre', { class: 'draft' }, b.draft),
   ],
+  reject: () => [el('div', { class: 'ok' }, 'Запрос отклонён. Решение сохранено в журнале; запрос не отправлен.')],
 };
 
 async function runAssistant(action, gid) {
   const out = $('#ai-out');
-  if (action === 'reject') {
-    out.replaceChildren(el('div', { class: 'facts' }, 'Запрос отклонён. Ничего не отправлено и не сохранено.'));
-    return;
+  const project = state.project || 'main';
+  const requestId = ++state.aiRequest;
+  const current = () => state.selected === gid && state.project === project && state.aiRequest === requestId;
+  const decision = action === 'confirm' || action === 'reject';
+  const pending = state.approval;
+  if (decision && (!pending || pending.gid !== gid || pending.project !== project)) {
+    out.replaceChildren(el('div', { class: 'warn' }, 'Сначала сформируйте новый черновик запроса.')); return;
   }
   const q = encodeURIComponent(gid);
-  const path = {
+  const path = decision ? '/api/approve' : {
     explain: `/api/explain?gid=${q}&project=${state.project || 'main'}`,
     whatif: `/api/whatif?exclude=${q}&project=${state.project || 'main'}`,
     request: `/api/request?gid=${q}&project=${state.project || 'main'}`,
-    confirm: `/api/request?gid=${q}&confirm=1&project=${state.project || 'main'}`,
   }[action];
   const buttons = document.querySelectorAll('#card [data-ai]');
   buttons.forEach((b) => { b.disabled = true; });
   out.replaceChildren(el('div', { class: 'muted' }, 'ассистент работает…'));
   try {
-    const body = await api(path);
-    if (state.selected !== gid) return;
+    const options = decision ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, gid, action_id: pending.action_id, approved: action === 'confirm' }) } : {};
+    const body = await api(path, 60000, options);
+    if (!current()) return;
+    if (action === 'request') state.approval = { project, gid, action_id: body.action_id };
+    if (decision) state.approval = null;
     out.replaceChildren(...AI_VIEW[action](body));
   } catch (err) {
-    if (state.selected !== gid) return;
+    if (!current()) return;
     if (err.offline) {
       assistant.up = false;
       const s = document.getElementById('assistant-status');
@@ -524,11 +533,12 @@ async function runAssistant(action, gid) {
     }
     out.replaceChildren(el('div', { class: 'warn' }, err.message));
   } finally {
-    document.querySelectorAll('#card [data-ai]').forEach((b) => { b.disabled = false; });
+    if (current()) document.querySelectorAll('#card [data-ai]').forEach((b) => { b.disabled = false; });
   }
 }
 
 function renderCard(gid) {
+  state.approval = null; state.aiRequest++;
   const n = state.byId.get(gid);
   const card = $('#card');
   card.replaceChildren(
@@ -547,6 +557,7 @@ function renderCard(gid) {
 }
 
 function closeCard() {
+  state.approval = null; state.aiRequest++;
   $('#card').hidden = true;
   $('.layout').classList.remove('with-card');
   state.selected = null;
@@ -577,10 +588,11 @@ function select(gid) {
 }
 
 // ---------------------------------------------------------------- загрузка
-async function loadGraph(url) {
+async function loadGraph(url, projectId, version) {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   const g = await res.json();
+  if (shell.currentId !== projectId || shell.loadVersion !== version) return false;
   state.graph = g;
   state.byId = new Map(); state.out = new Map(); state.inc = new Map(); state.rank = new Map();
   for (const n of g.nodes) state.byId.set(n.id, n);
@@ -599,6 +611,7 @@ async function loadGraph(url) {
   renderQueue();
   renderPlan();
   renderLevels();
+  return true;
 }
 
 async function load() {
@@ -611,7 +624,7 @@ async function load() {
 // ---------------------------------------------------------------- оболочка: проекты и загрузка выгрузки
 // Список проектов отдаёт сервер (serve.py): основной — данные из data/, остальные — загруженные через форму.
 // Без сервера (статический хостинг) остаётся один проект из graph.json. Фронт ничего не считает.
-const shell = { projects: [], currentId: null, api: true };
+const shell = { projects: [], currentId: null, api: true, loadVersion: 0 };
 const currentProject = () => shell.projects.find((p) => p.id === shell.currentId) || null;
 const projectNote = (p) => `${fmtInt.format(p.nodes || 0)} узлов · ${fmtInt.format(p.edges || 0)} переводов`;
 let DATA_NOTE = '';
@@ -654,13 +667,15 @@ function showHome() {
 
 async function showAnalysis() {
   const p = currentProject();
+  const version = shell.loadVersion;
   if (!p || p.status !== 'ready') { showHome(); return; }
   if (state.graphUrl !== p.graph_url) {
     $('#home-hint').textContent = 'Загружаю результат…';
-    await loadGraph(p.graph_url);
+    if (!await loadGraph(p.graph_url, p.id, version)) return;
     state.graphUrl = p.graph_url;
     state.project = p.id;
   }
+  if (shell.currentId !== p.id || shell.loadVersion !== version) return;
   const g = state.graph;
   DATA_NOTE = p.created_at ? `рассчитано ${p.created_at.replace('T', ' ').slice(0, 16)}` : '';
   $('#home').hidden = true;
@@ -680,6 +695,8 @@ function ensureMap() {
 }
 
 function openProject(id) {
+  shell.loadVersion++;
+  closeCard();
   shell.currentId = id;
   try { localStorage.setItem('money-graph.current', id); } catch { /* без хранилища */ }
   renderProjects();

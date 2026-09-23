@@ -55,7 +55,7 @@ def main():
             with con.cursor() as cur:
                 cur.execute("select run_id, mode, facts, output from agent_runs where id=%s", (body["agent_run_id"],))
                 rid, mode, facts, output = cur.fetchone()
-                assert rid == health["db"]["last_run"]["run_id"] and mode == "replay"
+                assert rid == assistant.current_run_id() and mode == "replay"
                 assert facts == body["facts"] and output == body["answer"]
         for gid, decision in [("100000002398779100", True), ("100000003684369100", False)]:
             draft = api("/api/agent", {"gid": gid, "action": "request"})
@@ -77,6 +77,31 @@ def main():
         api("/api/agent", {"gid": 123}, 400)
         api("/api/agent", {"gid": "missing"}, 404)
         api("/api/missing", expected=404)
+        # Загруженные проекты: факты и журнал относятся к выбранному результату,
+        # даже когда последний прогон в БД отличается от основного.
+        from pathlib import Path
+        checked_projects = 0
+        for project in api('/api/projects')['projects']:
+            if project['id'] == 'main' or project['status'] != 'ready': continue
+            pid = project['id']
+            graph = api('/' + project['graph_url'])
+            out = Path('projects') / pid / 'out'
+            expected_run = assistant.current_run_id(out)
+            for index, approved in [(0, True), (1, False)]:
+                node = graph['nodes'][index]; gid = node['id']
+                explained = api('/api/agent', {'project': pid, 'gid': gid})
+                assert explained['facts']['gid'] == gid
+                assert explained['facts']['in_kzt'] == node['in_kzt']
+                with con.cursor() as cur:
+                    cur.execute('select run_id from agent_runs where id=%s', (explained['agent_run_id'],))
+                    assert cur.fetchone()[0] == expected_run
+                draft = api('/api/agent', {'project': pid, 'gid': gid, 'action':'request'})
+                result = api('/api/approve', {'project':pid,'gid':gid,'action_id':draft['action_id'],'approved':approved})
+                with con.cursor() as cur:
+                    cur.execute('select run_id,approved from approvals where id=%s',(result['approval_id'],))
+                    assert cur.fetchone() == (expected_run,approved)
+            checked_projects += 1
+        print('Uploaded project isolation checks:', checked_projects)
     finally:
         con.close()
     print("OK: health, both direction facts, replay journals, approve/reject, 4 concurrent retries, conflicts, legacy API, invalid input")
