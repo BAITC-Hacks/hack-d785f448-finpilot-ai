@@ -183,6 +183,10 @@ DECIDE_SCHEMA = {
 }
 
 
+class ModelError(RuntimeError):
+    """Живая модель не ответила; нельзя выдавать шаблон за результат вызова."""
+
+
 class Model:
     def __init__(self, replay=False, record=False):
         self.record = record; self.mode = "replay"; self.client = None; self.model = None
@@ -195,7 +199,7 @@ class Model:
     def _client(self):
         if self.client is None:
             from openai import OpenAI
-            self.client = OpenAI() if self.mode == "live" else OpenAI(api_key=os.environ["NVIDIA_API_KEY"], base_url="https://integrate.api.nvidia.com/v1")
+            self.client = OpenAI(timeout=45, max_retries=0) if self.mode == "live" else OpenAI(api_key=os.environ["NVIDIA_API_KEY"], base_url="https://integrate.api.nvidia.com/v1", timeout=45, max_retries=0)
         return self.client
 
     def ask(self, key, task, payload, schema):
@@ -219,12 +223,12 @@ class Model:
                 self.fixtures[key] = {k: v for k, v in ans.items() if not k.startswith("_")}
                 FIX.parent.mkdir(exist_ok=True); json.dump(self.fixtures, open(FIX, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
             return ans
-        except Exception as ex:  # сеть/ключ/лимит — демо не должно падать
-            return template_answer(task, payload, schema) | {"_source": f"template (ошибка модели: {type(ex).__name__})"}
+        except Exception as ex:
+            raise ModelError(f"Ошибка live-модели ({type(ex).__name__}). Ответ replay не подставлен.") from ex
 
 
 def template_answer(task, payload, schema):
-    """Шаблонное объяснение из фактов — без модели. Используется в replay без фикстуры и при ошибке сети."""
+    """Шаблонное объяснение из фактов — без модели. Используется только в replay без фикстуры."""
     if set(schema["properties"]) == {"summary"}:   # сцена 3: текст собирается в scene_whatif
         return {"summary": ""}
     if "choice" in schema["properties"]:

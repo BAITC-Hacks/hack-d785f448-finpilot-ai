@@ -209,6 +209,7 @@ def main():
 
         def _error(self, ex):
             if isinstance(ex, assistant.DatabaseError): code = 503
+            elif isinstance(ex, assistant.ModelError): code = 502
             elif isinstance(ex, assistant.ApprovalConflict): code = 409
             elif isinstance(ex, KeyError): code = 404
             elif isinstance(ex, (ValueError, TypeError)): code = 400

@@ -8,8 +8,10 @@ import json
 import os
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 
 import psycopg2
+import assistant
 
 BASE = os.environ.get("TEST_BASE_URL", "http://localhost:8000")
 
@@ -31,6 +33,19 @@ def main():
     health = api("/api/health")
     assert health["ok"] and health["db"]["ok"] and health["mode"] == "replay"
     assert health["nodes"] == 2248
+    # Отдельный тест обработки отказа SDK; не является живым вызовом модели.
+    def fail_provider(**kwargs):
+        assert kwargs["store"] is False
+        raise TimeoutError("simulated provider outage")
+    model = assistant.Model(replay=True)
+    model.mode = "live"; model.model = "test-only"
+    model.client = SimpleNamespace(responses=SimpleNamespace(create=fail_provider))
+    try:
+        model.ask("test", "test", {}, assistant.SCHEMA)
+    except assistant.ModelError:
+        pass
+    else:
+        raise AssertionError("Provider failure was hidden by replay")
     con = psycopg2.connect(os.environ["DATABASE_URL"])
     try:
         for gid, reach in [("100000002398779100", 8), ("100000003684369100", 9)]:
