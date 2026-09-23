@@ -1,0 +1,37 @@
+# Локальный запуск всего проекта: приложение + PostgreSQL.
+#   cp .env.example .env      # при желании поменять пароль и добавить ключ модели
+#   docker compose up --build # http://localhost:8000
+# Значения ${…:-…} — запасные, чтобы стартовало и без .env; реальные секреты — только в .env, он в .gitignore.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-graph}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-graph-local-only}
+      POSTGRES_DB: ${POSTGRES_DB:-graph}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro   # схема применяется один раз, при пустом томе
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-graph} -d ${POSTGRES_DB:-graph}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-graph}:${POSTGRES_PASSWORD:-graph-local-only}@db:5432/${POSTGRES_DB:-graph}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-luna}
+      PORT: "8000"
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./out:/app/out          # результаты прогона видны на хосте
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

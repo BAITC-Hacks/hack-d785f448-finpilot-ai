@@ -19,8 +19,8 @@
   replay  — ключей нет или задан --replay: ответы из fixtures/replay.json; если фикстуры нет — шаблонное объяснение из фактов.
 --record сохраняет живые ответы в fixtures/replay.json, чтобы демо работало без сети.
 
-Журнал: каждый вызов дописывается в out/agent_runs.jsonl; при SUPABASE_URL и SUPABASE_ANON_KEY — ещё и в таблицу agent_runs.
-Ключи в код и в Git не попадают: только переменные окружения.
+Журнал: каждый вызов дописывается в out/agent_runs.jsonl; при DATABASE_URL (PostgreSQL из compose.yaml) — ещё и в таблицу agent_runs,
+подтверждённые запросы — в approvals. Ключи в код и в Git не попадают: только переменные окружения (.env, см. .env.example).
 """
 import argparse, json, os, sys, time, urllib.request
 from pathlib import Path
@@ -241,22 +241,43 @@ def template_answer(task, payload, schema):
 
 
 # ------------------------------------------------------------------ журнал
+def _db():
+    url = os.environ.get("DATABASE_URL")
+    if not url: return None
+    try:
+        import psycopg2; return psycopg2.connect(url, connect_timeout=3)
+    except Exception:
+        return None  # база необязательна: локальный журнал уже записан
+
+
 def log_run(kind, payload, answer):
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, "input": payload, "answer": answer}
     OUT.mkdir(exist_ok=True)
     with open(OUT / "agent_runs.jsonl", "a", encoding="utf-8") as fh: fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_ANON_KEY")
-    if url and key:
+    con = _db()
+    if con:
         try:
-            # схема supabase/schema.sql: agent_runs(case_id, mode, model, facts, output)
-            src = str(answer.get("_source", "replay")); mode = "replay" if src.startswith(("replay", "template")) else "live"
-            body = json.dumps({"case_id": None, "mode": mode, "model": src.split(":", 1)[1] if ":" in src else None,
-                               "facts": {"kind": kind, **payload}, "output": answer}, ensure_ascii=False).encode()
-            req = urllib.request.Request(f"{url}/rest/v1/agent_runs", data=body, method="POST",
-                                         headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json", "Prefer": "return=minimal"})
-            urllib.request.urlopen(req, timeout=5)
+            src = str(answer.get("_source", "replay")) if isinstance(answer, dict) else "replay"
+            mode = "replay" if src.startswith(("replay", "template")) else "live"
+            with con, con.cursor() as cur:
+                cur.execute("insert into agent_runs (kind, mode, model, facts, output) values (%s, %s, %s, %s, %s)",
+                            (kind, mode, src.split(":", 1)[1] if ":" in src else None, json.dumps(payload, ensure_ascii=False), json.dumps(answer, ensure_ascii=False)))
         except Exception:
-            pass  # зеркало необязательно: локальный журнал уже записан
+            pass
+        finally:
+            con.close()
+
+
+def log_approval(gid, action, reviewer):
+    con = _db()
+    if con:
+        try:
+            with con, con.cursor() as cur:
+                cur.execute("insert into approvals (gid, action, approved, reviewer) values (%s, %s, true, %s)", (gid, action, reviewer))
+        except Exception:
+            pass
+        finally:
+            con.close()
 
 
 # ------------------------------------------------------------------ сцены
@@ -289,7 +310,8 @@ def scene_request(G, M, gid, confirm=False):
         return {"status": "awaiting_human_approval", "draft": draft, "note": "Действие «сформировать запрос» выполняется только после подтверждения человеком: повторите с --confirm"}
     OUT.joinpath("requests").mkdir(parents=True, exist_ok=True)
     path = OUT / "requests" / f"request_{gid}.md"; path.write_text(draft, encoding="utf-8")
-    log_run("request_approved", {"gid": gid, "approved_by": os.environ.get("USER") or os.environ.get("USERNAME") or "analyst"}, {"path": str(path)})
+    reviewer = os.environ.get("USER") or os.environ.get("USERNAME") or "analyst"
+    log_run("request_approved", {"gid": gid, "approved_by": reviewer}, {"path": str(path)}); log_approval(gid, "request_info", reviewer)
     return {"status": "saved", "path": str(path), "draft": draft}
 
 

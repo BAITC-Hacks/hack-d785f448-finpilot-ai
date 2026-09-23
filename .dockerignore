@@ -1,0 +1,11 @@
+.git
+out/
+out_prev/
+.venv/
+venv/
+__pycache__/
+.env
+.env.*
+!.env.example
+docs/
+*.docx

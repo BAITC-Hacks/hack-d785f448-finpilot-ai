@@ -384,7 +384,7 @@ function cardLimits(n) {
 
 // ---------------------------------------------------------------- ассистент в карточке (python assistant.py serve)
 // Страница не зависит от ассистента: сервер не отвечает — подсказка, остальное работает.
-const API = 'http://127.0.0.1:8765';
+const API = window.API_BASE || (location.protocol === 'file:' ? 'http://127.0.0.1:8765' : location.origin);
 const NEXT_STEP_RU = {
   check_neighbors: 'проверить контрагентов',
   request_data: 'запросить данные',
