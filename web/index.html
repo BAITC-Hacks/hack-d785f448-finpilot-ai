@@ -7,45 +7,83 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
-  <h1>Граф денег</h1>
-  <span class="meta" id="meta">загрузка…</span>
-  <nav class="tabs" id="tabs">
-    <button type="button" data-tab="queue" class="active">Очередь проверки</button>
-    <button type="button" data-tab="plan">План охвата</button>
-    <button type="button" data-tab="levels">Уровни</button>
-  </nav>
-</header>
-<main class="layout">
-  <section class="left">
-    <div class="tab" id="tab-queue">
-      <table class="grid queue" id="queue">
-        <thead><tr><th>#</th><th>gid</th><th>Роль</th><th>Приоритет</th><th>Признаки</th><th>Метки</th></tr></thead>
-        <tbody></tbody>
-      </table>
+<aside class="side">
+  <div class="brand">Граф денег</div>
+  <button type="button" class="new-btn" id="new-project">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    Новый проект
+  </button>
+  <form class="new-form" id="new-project-form" hidden autocomplete="off">
+    <input id="project-name" type="text" placeholder="Название проекта" maxlength="60">
+    <div class="new-form-actions">
+      <button type="submit" class="primary">Создать</button>
+      <button type="button" data-cancel>Отмена</button>
     </div>
-    <div class="tab" id="tab-plan" hidden>
-      <h2 class="tab-title" id="plan-title"></h2>
-      <p class="muted" id="plan-note"></p>
-      <table class="grid rows" id="plan">
-        <thead><tr><th>Шаг</th><th>gid</th><th>Роль</th><th>Прирост</th><th>Накопленный охват</th></tr></thead>
-        <tbody></tbody>
-      </table>
+    <div class="form-err" id="project-err"></div>
+  </form>
+  <ul class="projects" id="projects"></ul>
+  <div class="side-foot muted">Проверка транзакционного графа. Код считает, ассистент объясняет.</div>
+</aside>
+
+<div class="content">
+  <section class="home" id="home">
+    <div class="composer-wrap">
+      <h2 id="home-title">Граф денег</h2>
+      <p class="muted" id="home-hint">Создайте проект слева, затем прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.</p>
+      <label class="composer" id="composer">
+        <input type="file" id="file" hidden accept=".csv,.parquet,.zip,.json,.xlsx">
+        <span class="clip" title="Прикрепить файл">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="composer-text" id="composer-text">Прикрепите файл со списком транзакций</span>
+      </label>
+      <p class="muted small">Выгрузка переводов: .csv, .parquet, .zip. Данные не покидают этот компьютер.</p>
+      <ol class="stages" id="stages" hidden></ol>
     </div>
-    <div class="tab" id="tab-levels" hidden></div>
   </section>
-  <section class="right">
-    <form class="mapbar" id="search-form" autocomplete="off">
-      <input id="search" type="search" placeholder="Поиск по gid" spellcheck="false">
-      <button type="submit">Найти</button>
-      <span id="search-msg" class="muted"></span>
-      <span class="legend" id="legend"></span>
-    </form>
-    <div id="map"></div>
-    <div id="map-status" class="map-status">карта строится…</div>
+
+  <section class="analysis" id="analysis" hidden>
+    <header class="top">
+      <h1 id="analysis-title">Граф денег</h1>
+      <span class="meta" id="meta">загрузка…</span>
+      <nav class="tabs" id="tabs">
+        <button type="button" data-tab="queue" class="active">Очередь проверки</button>
+        <button type="button" data-tab="plan">План охвата</button>
+        <button type="button" data-tab="levels">Уровни</button>
+      </nav>
+    </header>
+    <main class="layout">
+      <section class="left">
+        <div class="tab" id="tab-queue">
+          <table class="grid queue" id="queue">
+            <thead><tr><th>#</th><th>gid</th><th>Роль</th><th>Приоритет</th><th>Признаки</th><th>Метки</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="tab" id="tab-plan" hidden>
+          <h2 class="tab-title" id="plan-title"></h2>
+          <p class="muted" id="plan-note"></p>
+          <table class="grid rows" id="plan">
+            <thead><tr><th>Шаг</th><th>gid</th><th>Роль</th><th>Прирост</th><th>Накопленный охват</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="tab" id="tab-levels" hidden></div>
+      </section>
+      <section class="right">
+        <form class="mapbar" id="search-form" autocomplete="off">
+          <input id="search" type="search" placeholder="Поиск по gid" spellcheck="false">
+          <button type="submit">Найти</button>
+          <span id="search-msg" class="muted"></span>
+          <span class="legend" id="legend"></span>
+        </form>
+        <div id="map"></div>
+        <div id="map-status" class="map-status">карта строится…</div>
+      </section>
+      <aside class="card" id="card" hidden></aside>
+    </main>
   </section>
-  <aside class="card" id="card" hidden></aside>
-</main>
+</div>
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <script>window.vis || document.write('<script src="vendor/vis-network.min.js"><\/script>');</script>
 <script src="app.js"></script>

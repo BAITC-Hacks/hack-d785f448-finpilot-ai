@@ -207,6 +207,7 @@ function setMapStatus(text) {
 function buildMap() {
   renderLegend();
   if (!window.vis) {
+    state.mapFailed = true;
     setMapStatus('Библиотека карты не загрузилась (нет сети?) — положите vis-network.min.js в web/vendor/. Очередь работает.');
     return;
   }
@@ -587,17 +588,202 @@ async function load() {
   }
   state.ranked = [...g.nodes].sort((a, b) => b.priority - a.priority);
   state.ranked.forEach((n, i) => state.rank.set(n.id, i + 1));
-  $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)}`;
   renderQueue();
   renderPlan();
   renderLevels();
   setupTabs();
   setupSearch();
   setupCard();
-  buildMap();
+  initShell();
+}
+
+// ---------------------------------------------------------------- оболочка: проекты, стартовый экран, загрузка файла
+// Проекты и выбранный проект хранятся в localStorage только для удобства показа — это не база данных.
+// Загрузка файла — сценарий демо: расчёт делает pipeline.py заранее, страница показывает его результат (graph.json).
+const STORE_PROJECTS = 'money-graph.projects';
+const STORE_CURRENT = 'money-graph.current';
+const store = {
+  get(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* приватный режим или запрет хранилища — работаем в памяти */
+    }
+  },
+};
+const shell = { projects: [], currentId: null, busy: false };
+
+const STAGES = (file) => [
+  `Чтение файла ${file}`,
+  'Построение графа переводов',
+  'Роли узлов по правилам R0–R8',
+  'След денег известных курьеров',
+  'Приоритет проверки и план охвата',
+  'Готово: результат пайплайна — out/graph.json',
+];
+const STAGE_MS = 550;
+
+const currentProject = () => shell.projects.find((p) => p.id === shell.currentId) || null;
+
+function saveProjects() {
+  store.set(STORE_PROJECTS, shell.projects);
+  store.set(STORE_CURRENT, shell.currentId);
+}
+
+function renderProjects() {
+  const g = state.graph;
+  $('#projects').replaceChildren(
+    ...shell.projects.map((p) =>
+      el('li', { class: p.id === shell.currentId ? 'active' : '', dataset: { id: p.id } },
+        el('span', { class: 'name', title: p.name }, p.name),
+        el('span', { class: 'status' },
+          p.status === 'ready' ? `${p.file} · узлов: ${fmtInt.format(g.nodes.length)}`
+            : p.status === 'processing' ? 'идёт расчёт…' : 'нет данных'))),
+  );
+}
+
+function showHome() {
+  const p = currentProject();
+  const composer = $('#composer');
+  const text = $('#composer-text');
+  $('#home').hidden = false;
+  $('#analysis').hidden = true;
+  $('#home-title').textContent = p ? p.name : 'Граф денег';
+  $('#home-hint').textContent = p
+    ? 'Прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.'
+    : 'Создайте проект слева, затем прикрепите выгрузку транзакций — очередь подозрительных узлов появится после расчёта.';
+  composer.classList.toggle('disabled', !p || shell.busy);
+  composer.classList.toggle('busy', shell.busy);
+  $('#file').disabled = !p || shell.busy;
+  if (!shell.busy) {
+    text.textContent = 'Прикрепите файл со списком транзакций';
+    text.classList.remove('filled');
+    $('#stages').hidden = true;
+  }
+}
+
+function showAnalysis() {
+  const p = currentProject();
+  const g = state.graph;
+  $('#home').hidden = true;
+  $('#analysis').hidden = false;
+  $('#analysis-title').textContent = p ? `Граф денег · ${p.name}` : 'Граф денег';
+  $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)}${p && p.file ? ` · файл: ${p.file}` : ''}`;
+  ensureMap();
+}
+
+function ensureMap() {
+  if (!state.network) {
+    if (!state.mapFailed) buildMap();
+    return;
+  }
+  state.network.setSize('100%', '100%');
+  state.network.redraw();
+}
+
+function openProject(id) {
+  shell.currentId = id;
+  saveProjects();
+  renderProjects();
+  const p = currentProject();
+  if (p && p.status === 'ready') showAnalysis();
+  else showHome();
+}
+
+function createProject(name) {
+  const project = { id: `p${Date.now().toString(36)}`, name, file: null, status: 'empty' };
+  shell.projects.unshift(project);
+  openProject(project.id);
+}
+
+async function ingestFile(file) {
+  const p = currentProject();
+  if (!p || shell.busy) return;
+  shell.busy = true;
+  p.file = file.name;
+  p.status = 'processing';
+  saveProjects();
+  renderProjects();
+  showHome();
+  const text = $('#composer-text');
+  text.textContent = file.name;
+  text.classList.add('filled');
+  const stages = STAGES(file.name);
+  const list = $('#stages');
+  list.hidden = false;
+  list.replaceChildren(...stages.map((s) => el('li', {}, el('span', { class: 'dot' }), s)));
+  const items = list.children;
+  for (let i = 0; i < items.length; i++) {
+    items[i].classList.add('active');
+    await new Promise((r) => setTimeout(r, i === items.length - 1 ? STAGE_MS * 0.6 : STAGE_MS));
+    items[i].classList.remove('active');
+    items[i].classList.add('done');
+    items[i].firstChild.textContent = '✓';
+  }
+  p.status = 'ready';
+  shell.busy = false;
+  saveProjects();
+  renderProjects();
+  showAnalysis();
+}
+
+function initShell() {
+  shell.projects = (store.get(STORE_PROJECTS, []) || []).filter((p) => p && p.id && p.name)
+    .map((p) => ({ ...p, status: p.status === 'processing' ? 'empty' : p.status }));
+  shell.currentId = store.get(STORE_CURRENT, null);
+  if (!currentProject()) shell.currentId = null;
+
+  const form = $('#new-project-form');
+  const nameInput = $('#project-name');
+  const err = $('#project-err');
+  $('#new-project').addEventListener('click', () => {
+    form.hidden = false;
+    nameInput.value = '';
+    err.textContent = '';
+    nameInput.classList.remove('invalid');
+    nameInput.focus();
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) {
+      err.textContent = 'Введите название проекта — без него проект не создаётся.';
+      nameInput.classList.add('invalid');
+      nameInput.focus();
+      return;
+    }
+    form.hidden = true;
+    createProject(name);
+  });
+  form.querySelector('[data-cancel]').addEventListener('click', () => { form.hidden = true; });
+  nameInput.addEventListener('input', () => { nameInput.classList.remove('invalid'); err.textContent = ''; });
+
+  $('#projects').addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-id]');
+    if (li && !shell.busy) openProject(li.dataset.id);
+  });
+  $('#file').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) ingestFile(file);
+    e.target.value = '';
+  });
+
+  renderProjects();
+  const p = currentProject();
+  if (p && p.status === 'ready') showAnalysis();
+  else showHome();
 }
 
 load().catch((err) => {
-  $('#meta').textContent = '';
-  $('.left').prepend(el('div', { class: 'error' }, `Не удалось загрузить данные: ${err.message}. Запуск: python -m http.server 8000 --directory web`));
+  $('#home').hidden = false;
+  $('#composer').classList.add('disabled');
+  $('#home-hint').replaceChildren(el('span', { class: 'error' }, `Не удалось загрузить данные: ${err.message}. Запуск: python -m http.server 8000 --directory web`));
 });
