@@ -118,7 +118,7 @@ def db_health():
 def main():
     run_pipeline()
     if os.environ.get("DATABASE_URL"):
-        subprocess.run([sys.executable, str(ROOT / "db_load.py"), "--out", str(OUT)])
+        subprocess.run([sys.executable, str(ROOT / "db_load.py"), "--out", str(OUT)], check=True)
     web = ROOT / "web"
     if not (web / "graph.json").exists() or (OUT / "graph.json").stat().st_mtime > (web / "graph.json").stat().st_mtime:
         (web / "graph.json").write_bytes((OUT / "graph.json").read_bytes()); print("serve: web/graph.json обновлён из out/")
@@ -161,7 +161,11 @@ def main():
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
             try:
                 if u.path == "/api/projects": body = {"projects": list_projects()}
-                elif u.path == "/api/health": body = {"ok": True, "mode": M.mode, "model": M.model, "nodes": len(G.nodes), "db": db_health()}
+                elif u.path == "/api/health":
+                    database = db_health()
+                    ready = database["ok"] if database.get("configured") else True
+                    self._json(200 if ready else 503, {"ok": ready, "mode": M.mode, "model": M.model, "nodes": len(G.nodes), "db": database})
+                    return
                 elif u.path == "/api/db/health": body = db_health()
                 elif u.path == "/api/explain": body = assistant.scene_explain(graph_for(q), M, q["gid"])
                 elif u.path == "/api/decide": body = assistant.scene_decide(graph_for(q), M, int(q.get("k", 3)))
@@ -175,7 +179,7 @@ def main():
         def _json(self, code, body):
             data = json.dumps(body, ensure_ascii=False).encode()
             self.send_response(code); self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Access-Control-Allow-Origin", "*"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+            self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 
         def log_message(self, fmt, *args):
             if "/api/" in (args[0] if args else ""): sys.stderr.write("%s\n" % (fmt % args))
