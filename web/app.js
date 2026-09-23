@@ -381,6 +381,149 @@ function cardLimits(n) {
     items.length ? el('ul', { class: 'limits' }, items.map((t) => el('li', {}, t))) : el('div', { class: 'muted' }, '—'));
 }
 
+// ---------------------------------------------------------------- ассистент в карточке (python assistant.py serve)
+// Страница не зависит от ассистента: сервер не отвечает — подсказка, остальное работает.
+const API = 'http://127.0.0.1:8765';
+const NEXT_STEP_RU = {
+  check_neighbors: 'проверить контрагентов',
+  request_data: 'запросить данные',
+  mark_legit: 'отметить как легальную деятельность',
+  escalate: 'передать на углублённую проверку',
+  none: 'действий не требуется',
+};
+const assistant = { up: null, mode: null, model: null };
+const NOT_RUNNING = 'ассистент не запущен: python assistant.py serve';
+
+async function api(path, timeoutMs = 60000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    let res;
+    try {
+      res = await fetch(API + path, { signal: ctrl.signal });
+    } catch (err) {
+      throw Object.assign(new Error(err.name === 'AbortError' ? 'ассистент не ответил вовремя' : NOT_RUNNING), { offline: true });
+    }
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function assistantStatus() {
+  let text = 'ассистент: проверка связи…';
+  if (assistant.up === true) text = `ассистент: режим ${assistant.mode}${assistant.model ? ` · ${assistant.model}` : ''}`;
+  if (assistant.up === false) text = NOT_RUNNING;
+  return el('div', { id: 'assistant-status', class: assistant.up === false ? 'warn' : 'muted' }, text);
+}
+
+async function checkAssistant() {
+  try {
+    const h = await api('/api/health', 2500);
+    Object.assign(assistant, { up: true, mode: h.mode, model: h.model });
+  } catch {
+    assistant.up = false;
+  }
+  const s = document.getElementById('assistant-status');
+  if (s) s.replaceWith(assistantStatus());
+}
+
+function cardAssistant() {
+  return block('Ассистент аналитика',
+    assistantStatus(),
+    el('div', { class: 'actions' },
+      el('button', { type: 'button', 'data-ai': 'explain' }, 'Объяснить'),
+      el('button', { type: 'button', 'data-ai': 'whatif' }, 'Что если исключить'),
+      el('button', { type: 'button', 'data-ai': 'request' }, 'Сформировать запрос')),
+    el('div', { id: 'ai-out' }));
+}
+
+function aiList(title, items) {
+  return items && items.length ? [el('div', { class: 'sub' }, title), el('ul', { class: 'limits' }, items.map((t) => el('li', {}, t)))] : [];
+}
+function aiGids(title, gids) {
+  return [el('div', { class: 'sub' }, `${title}: ${gids.length}`),
+    gids.length ? el('ul', { class: 'edges' }, gids.map((g) => el('li', { dataset: { gid: g } },
+      el('span', { class: 'gid' }, g), state.byId.has(g) ? roleBadge(state.byId.get(g).role) : null))) : null];
+}
+function aiSource(ans) {
+  return ans && ans._source ? el('div', { class: 'muted src' }, `источник ответа: ${ans._source}`) : null;
+}
+
+const AI_VIEW = {
+  explain: (b) => {
+    const a = b.answer || {};
+    return [
+      el('p', { class: 'ai-summary' }, a.summary),
+      ...aiList('Гипотезы', a.hypotheses),
+      ...aiList('Альтернативные объяснения', a.alternative_explanations),
+      ...aiList('Каких данных не хватает', a.missing_data),
+      el('div', { class: 'facts' }, el('b', {}, 'Следующий шаг: '), NEXT_STEP_RU[a.next_step] || a.next_step || '—',
+        a.next_step_reason ? ` — ${a.next_step_reason}` : ''),
+      aiSource(a),
+    ];
+  },
+  whatif: (b) => {
+    const k = (b.top_after || []).length;
+    return [
+      el('p', { class: 'ai-summary' }, (b.answer && b.answer.summary) || ''),
+      ...aiGids(`Вошли в топ-${k}`, b.entered || []),
+      ...aiGids(`Вышли из топ-${k}`, b.left || []),
+      ...aiList('Сдвиги в очереди', (b.moved || []).map((m) => `${m.gid}: было ${m.was ?? '—'} → стало ${m.now}`)),
+      el('div', { class: 'muted' }, b.note || ''),
+      aiSource(b.answer),
+    ];
+  },
+  request: (b) => [
+    el('div', { class: 'approval' },
+      el('b', {}, 'Требуется подтверждение человека'),
+      el('p', {}, 'Черновик запроса подготовлен. Ничего не отправлено и не сохранено, пока аналитик не подтвердит.'),
+      el('pre', { class: 'draft' }, b.draft),
+      el('div', { class: 'actions' },
+        el('button', { type: 'button', class: 'primary', 'data-ai': 'confirm' }, 'Подтвердить'),
+        el('button', { type: 'button', 'data-ai': 'reject' }, 'Отклонить'))),
+  ],
+  confirm: (b) => [
+    el('div', { class: 'ok' }, `Запрос подтверждён аналитиком и сохранён: ${b.path}`),
+    el('pre', { class: 'draft' }, b.draft),
+  ],
+};
+
+async function runAssistant(action, gid) {
+  const out = $('#ai-out');
+  if (action === 'reject') {
+    out.replaceChildren(el('div', { class: 'facts' }, 'Запрос отклонён. Ничего не отправлено и не сохранено.'));
+    return;
+  }
+  const q = encodeURIComponent(gid);
+  const path = {
+    explain: `/api/explain?gid=${q}`,
+    whatif: `/api/whatif?exclude=${q}`,
+    request: `/api/request?gid=${q}`,
+    confirm: `/api/request?gid=${q}&confirm=1`,
+  }[action];
+  const buttons = document.querySelectorAll('#card [data-ai]');
+  buttons.forEach((b) => { b.disabled = true; });
+  out.replaceChildren(el('div', { class: 'muted' }, 'ассистент работает…'));
+  try {
+    const body = await api(path);
+    if (state.selected !== gid) return;
+    out.replaceChildren(...AI_VIEW[action](body));
+  } catch (err) {
+    if (state.selected !== gid) return;
+    if (err.offline) {
+      assistant.up = false;
+      const s = document.getElementById('assistant-status');
+      if (s) s.replaceWith(assistantStatus());
+    }
+    out.replaceChildren(el('div', { class: 'warn' }, err.message));
+  } finally {
+    document.querySelectorAll('#card [data-ai]').forEach((b) => { b.disabled = false; });
+  }
+}
+
 function renderCard(gid) {
   const n = state.byId.get(gid);
   const card = $('#card');
@@ -391,10 +534,12 @@ function renderCard(gid) {
     cardFlags(n),
     cardEdges(n),
     cardLimits(n),
+    cardAssistant(),
   );
   card.hidden = false;
   card.scrollTop = 0;
   $('.layout').classList.add('with-card');
+  if (assistant.up !== true) checkAssistant();
 }
 
 function closeCard() {
@@ -408,6 +553,8 @@ function closeCard() {
 function setupCard() {
   $('#card').addEventListener('click', (e) => {
     if (e.target.closest('[data-action="close"]')) return closeCard();
+    const ai = e.target.closest('button[data-ai]');
+    if (ai) return runAssistant(ai.dataset.ai, state.selected);
     const li = e.target.closest('li[data-gid]');
     if (li) select(li.dataset.gid);
   });

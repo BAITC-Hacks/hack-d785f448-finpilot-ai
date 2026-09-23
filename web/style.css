@@ -94,3 +94,17 @@ body { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-
 .level li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid #f4f4f4; font-size: 12px; }
 .level li .gid { font-family: ui-monospace, Consolas, monospace; }
 .level li .num { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* ---- ассистент в карточке */
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.actions button { padding: 5px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font: inherit; font-size: 13px; }
+.actions button:hover { background: #f3f6ff; }
+.actions button:disabled { opacity: .5; cursor: wait; }
+.actions button.primary { background: #1d1d1f; color: #fff; border-color: #1d1d1f; }
+.warn { color: #b35c00; font-size: 13px; }
+.ok { color: #1a7f37; font-size: 13px; font-weight: 600; }
+.ai-summary { margin: 4px 0 6px; font-size: 14px; }
+.src { font-size: 11px; margin-top: 6px; }
+.approval { border: 2px solid #ff7f0e; background: #fff7ed; border-radius: 6px; padding: 8px 10px; }
+.approval p { margin: 4px 0 6px; font-size: 13px; }
+pre.draft { white-space: pre-wrap; margin: 6px 0 0; padding: 8px; max-height: 240px; overflow: auto; background: #f7f7f8; border-radius: 4px; font: 12px/1.4 ui-monospace, Consolas, monospace; }
