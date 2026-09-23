@@ -23,7 +23,19 @@
       </table>
     </div>
   </section>
+  <section class="right">
+    <form class="mapbar" id="search-form" autocomplete="off">
+      <input id="search" type="search" placeholder="Поиск по gid" spellcheck="false">
+      <button type="submit">Найти</button>
+      <span id="search-msg" class="muted"></span>
+      <span class="legend" id="legend"></span>
+    </form>
+    <div id="map"></div>
+    <div id="map-status" class="map-status">карта строится…</div>
+  </section>
 </main>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script>window.vis || document.write('<script src="vendor/vis-network.min.js"><\/script>');</script>
 <script src="app.js"></script>
 </body>
 </html>
