@@ -26,12 +26,18 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-luna}
       PORT: "8000"
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
       - ./out:/app/out          # результаты прогона видны на хосте
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
 
 volumes:
   db_data:
