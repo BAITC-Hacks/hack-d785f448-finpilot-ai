@@ -1,0 +1,6 @@
+# Tested with Python 3.12.14. SciPy is required by networkx.pagerank.
+pandas==3.0.1
+numpy==2.3.5
+pyarrow==25.0.1
+networkx==3.7
+scipy==1.18.1

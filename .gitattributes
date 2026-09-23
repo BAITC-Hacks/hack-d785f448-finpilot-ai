@@ -1,0 +1,6 @@
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.parquet binary
+# Keep generated artifacts byte-for-byte, including truncated evidence text.
+out_sample/* -text whitespace=-blank-at-eol,cr-at-eol

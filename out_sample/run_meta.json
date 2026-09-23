@@ -1,0 +1,51 @@
+{
+ "seed_money": {
+  "converged": true,
+  "iterations": 60,
+  "last_delta_kzt": 0.769,
+  "tol_kzt": 1.0,
+  "note": "tol — порог изменения между итерациями, не гарантированная погрешность результата"
+ },
+ "config": {
+  "many_payers": 3,
+  "coord_min_in": 5,
+  "coord_min_out": 5,
+  "coord_betweenness_quantile": 0.99,
+  "coord_max_out_to_in": 10,
+  "fan_out": 10,
+  "fan_out_to_in": 3,
+  "transit_pass": [
+   0.8,
+   1.2
+  ],
+  "fast_days": 2,
+  "fast_share": 0.7,
+  "terminal_min_kzt": 100000,
+  "money_sink_kzt": 500000,
+  "money_sink_max_pass": 0.5,
+  "repeat_min_tx": 2,
+  "seed_money_max_iter": 100,
+  "seed_money_tol_kzt": 1.0,
+  "priority_weights": {
+   "seed_money": 0.35,
+   "turnover": 0.15,
+   "betweenness": 0.1,
+   "role": 0.3,
+   "seed_reach": 0.1
+  },
+  "role_weight": {
+   "coordinator": 1.0,
+   "consolidator": 0.85,
+   "distributor": 0.75,
+   "transit": 0.4,
+   "terminal": 0.3,
+   "peripheral": 0.1
+  },
+  "seed_multiplier": 0.85,
+  "truncated_multiplier": 0.8,
+  "louvain_seed": 42,
+  "top_n": 30
+ },
+ "nodes": 2248,
+ "edges": 3119
+}
