@@ -12,6 +12,8 @@
   <span class="meta" id="meta">загрузка…</span>
   <nav class="tabs" id="tabs">
     <button type="button" data-tab="queue" class="active">Очередь проверки</button>
+    <button type="button" data-tab="plan">План охвата</button>
+    <button type="button" data-tab="levels">Уровни</button>
   </nav>
 </header>
 <main class="layout">
@@ -22,6 +24,15 @@
         <tbody></tbody>
       </table>
     </div>
+    <div class="tab" id="tab-plan" hidden>
+      <h2 class="tab-title" id="plan-title"></h2>
+      <p class="muted" id="plan-note"></p>
+      <table class="grid rows" id="plan">
+        <thead><tr><th>Шаг</th><th>gid</th><th>Роль</th><th>Прирост</th><th>Накопленный охват</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="tab" id="tab-levels" hidden></div>
   </section>
   <section class="right">
     <form class="mapbar" id="search-form" autocomplete="off">

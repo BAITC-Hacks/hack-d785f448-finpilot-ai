@@ -93,6 +93,78 @@ function renderQueue() {
   });
 }
 
+// ---------------------------------------------------------------- экран 4: план охвата
+// Процент — формат готовой доли из данных (plan_meta.capture_30, cumulative), не пересчёт.
+const pct = (x) => fmtPct(x).replace(/\s/g, '');
+
+function renderPlan() {
+  const g = state.graph;
+  const meta = g.plan_meta || {};
+  $('#plan-title').textContent =
+    `Модельный охват выбранных счетов — ${pct(meta.capture_30)} при фиксированных июльских потоках`;
+  $('#plan-note').textContent = meta.note || '';
+  $('#plan tbody').replaceChildren(
+    ...g.plan.map((p) =>
+      el('tr', { dataset: { gid: p.gid } },
+        el('td', { class: 'num' }, p.step),
+        el('td', { class: 'gid' }, p.gid),
+        el('td', {}, roleBadge(p.role)),
+        el('td', { class: 'num' }, `+${pct(p.gain)}`),
+        el('td', { class: 'num' }, pct(p.cumulative)),
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- экран 5: уровни
+const LEVEL_TITLE = {
+  0: 'Уровень 0 — курьеры',
+  1: 'Уровень 1 — точки сбора',
+  2: 'Уровень 2 — цепочки наслоения',
+  3: 'Уровень 3 — координаторы',
+  4: 'Уровень 4 — получатели',
+};
+
+function renderLevels() {
+  const groups = new Map(Object.keys(LEVEL_TITLE).map((k) => [Number(k), []]));
+  for (const n of state.ranked) {
+    for (const l of n.levels || []) {
+      if (groups.has(l.level)) groups.get(l.level).push({ n, list: l.list });
+    }
+  }
+  $('#tab-levels').replaceChildren(
+    ...[...groups].map(([level, items]) =>
+      el('section', { class: 'level' },
+        el('h3', {}, LEVEL_TITLE[level], ' ', el('span', { class: 'muted' }, `· ${items.length}`)),
+        items.length
+          ? el('ul', {}, items.map(({ n, list }) =>
+            el('li', { dataset: { gid: n.id } },
+              el('span', { class: 'gid' }, n.id), roleBadge(n.role),
+              el('span', { class: 'chip' }, list),
+              el('span', { class: 'num' }, fmtP(n.priority)))))
+          : el('div', { class: 'muted', style: 'padding:6px 10px' }, 'нет узлов'),
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- вкладки
+function setupTabs() {
+  $('#tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-tab]');
+    if (!btn) return;
+    for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('active', b === btn);
+    for (const t of document.querySelectorAll('.left .tab')) t.hidden = t.id !== `tab-${btn.dataset.tab}`;
+  });
+  // строки плана и уровней открывают карточку узла
+  for (const id of ['#plan', '#tab-levels']) {
+    $(id).addEventListener('click', (e) => {
+      const row = e.target.closest('[data-gid]');
+      if (row) select(row.dataset.gid);
+    });
+  }
+}
+
 // ---------------------------------------------------------------- экран 2: карта
 // Размер узла и толщина ребра — только визуальная шкала поверх готовых priority и sum_kzt.
 function nodeView(n) {
@@ -345,7 +417,7 @@ function setupCard() {
 function select(gid) {
   if (!state.byId.has(gid)) return false;
   state.selected = gid;
-  for (const tr of document.querySelectorAll('#queue tbody tr')) {
+  for (const tr of document.querySelectorAll('#queue tbody tr, #plan tbody tr')) {
     tr.classList.toggle('selected', tr.dataset.gid === gid);
   }
   renderCard(gid);
@@ -370,6 +442,9 @@ async function load() {
   state.ranked.forEach((n, i) => state.rank.set(n.id, i + 1));
   $('#meta').textContent = `узлов: ${fmtInt.format(g.nodes.length)} · рёбер: ${fmtInt.format(g.edges.length)}`;
   renderQueue();
+  renderPlan();
+  renderLevels();
+  setupTabs();
   setupSearch();
   setupCard();
   buildMap();

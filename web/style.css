@@ -80,3 +80,17 @@ body { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-
 .edges .num { margin-left: auto; font-variant-numeric: tabular-nums; }
 .limits { margin: 0; padding-left: 18px; font-size: 13px; }
 .limits li { margin: 2px 0; }
+
+/* ---- экраны 4–5: план охвата и уровни */
+.tab-title { margin: 4px 0 4px; font-size: 16px; }
+.tab p.muted { margin: 0 0 10px; font-size: 12px; }
+.rows tbody tr, .level li { cursor: pointer; }
+.rows tbody tr:hover, .level li:hover { background: #f3f6ff; }
+.rows tbody tr.selected { background: #e3ebff; }
+.level { margin: 0 0 14px; background: #fff; border: 1px solid #eee; border-radius: 6px; }
+.level h3 { margin: 0; padding: 8px 10px; font-size: 14px; border-bottom: 1px solid #eee; }
+.level h3 .muted { font-weight: 400; font-size: 12px; }
+.level ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; }
+.level li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid #f4f4f4; font-size: 12px; }
+.level li .gid { font-family: ui-monospace, Consolas, monospace; }
+.level li .num { margin-left: auto; font-variant-numeric: tabular-nums; }
