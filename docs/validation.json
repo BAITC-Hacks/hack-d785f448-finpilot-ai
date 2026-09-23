@@ -1,0 +1,36 @@
+{
+  "source_commit": "ea7bcd6bc437e000ec36bd2936df36141c39652b",
+  "python": "3.12.14",
+  "packages": {
+    "numpy": "2.3.5",
+    "pandas": "3.0.1",
+    "pyarrow": "25.0.1",
+    "networkx": "3.7",
+    "scipy": "1.18.1"
+  },
+  "command": "python run.py --data data --out out --prev out_sample",
+  "clean_checkout": true,
+  "fresh_virtual_environment": true,
+  "exit_code": 0,
+  "checks": 28,
+  "errors": 0,
+  "skipped": 0,
+  "elapsed_seconds": 13.09,
+  "sample_files_byte_identical": 9,
+  "sha256": {
+    "block_plan.csv": "dc0c8dd1985e7f07ff0891597764ffc71118e0508ac6bd4a0d2219cac612a008",
+    "clusters.csv": "555ae2fd96f94934b9b0755185246ac45351eb3510fbf8e1ae61174385b28a3f",
+    "graph.json": "fe2b83bf46e6df3699fbe60d4331e52e624e2b48755ec3e2f6c9f6e58b125afe",
+    "levels.csv": "f10c96b9403ca9387b4d9353c734cd0ed9994b9d7a9712edf66a9ed8b07d4af3",
+    "nodes_flags.csv": "830f0e42592d93e06660f66192fd94aaed1650d7ee474d5ba1a22e26af29d281",
+    "nodes_roles.csv": "58592b6c4f32174890f4a0a647d67707802c5657a3c03bd7fea7cca958752b7a",
+    "plan_meta.json": "a4c5d75da7976202aa2e07a1be44808638ec4b6583d2fb529aca6f9d168969ab",
+    "run_meta.json": "639dd688018e0a150e545ea86c50eab30c3b989b767a9e406033eec2db851642",
+    "top_nodes.csv": "d774c948b19aea66b3243a1aae8d627b21ada54704f8cd148e12f23e39e97132"
+  },
+  "graph_contract_checks": {
+    "node_ids_strings": true,
+    "edge_endpoints_strings": true,
+    "plan_ids_strings": true
+  }
+}
